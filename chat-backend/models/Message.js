@@ -18,7 +18,19 @@ const messageSchema = new SchemaMsg(
     content: {
       type: String,
       trim: true,
-      required: true,
+    },
+    // <<< NEW: Fields for file sharing >>>
+    fileUrl: {
+      type: String,
+      default: "",
+    },
+    fileType: {
+      type: String, // e.g., 'image', 'pdf', 'video'
+      default: "",
+    },
+    fileName: {
+      type: String,
+      default: "",
     },
     // <<< NEW: Status field for read receipts >>>
     // This approach is simpler for 1-to-1 chats.
@@ -28,6 +40,28 @@ const messageSchema = new SchemaMsg(
       type: String,
       enum: ["sent", "delivered", "read"],
       default: "sent",
+    },
+    isEdited: {
+      type: Boolean,
+      default: false,
+    },
+    deletedAt: {
+      type: Date,
+    },
+    replyTo: {
+      type: SchemaMsg.Types.ObjectId,
+      ref: "Message", // Reference to the message being replied to
+      default: null,
+    },
+    // To avoid extra lookups, we can store a snippet of the original message
+    replySnippet: {
+      type: String,
+      default: "",
+    },
+    replySenderName: {
+      // And the original sender's name
+      type: String,
+      default: "",
     },
     // The 'readBy' array from the unread message feature can coexist or be removed
     // if you prefer this status-based approach for all chat types.

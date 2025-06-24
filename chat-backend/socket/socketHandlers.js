@@ -51,12 +51,24 @@ function initializeSocketIO(io) {
 
     // <<< MODIFIED: sendMessage to handle 'delivered' status >>>
     socket.on("sendMessage", async (data) => {
-      const { conversationId, senderId, content } = data;
+      // <<< MODIFIED: Destructure new file-related fields >>>
+      const {
+        conversationId,
+        senderId,
+        content,
+        fileUrl,
+        fileType,
+        fileName,
+        replyTo,
+        replySnippet,
+        replySenderName,
+      } = data;
       console.log(
         `SOCKET_INFO: Message received: from ${senderId} in convo ${conversationId}`
       );
 
-      if (!conversationId || !senderId || !content) {
+      // A message must have content OR a file
+      if (!conversationId || !senderId || (!content && !fileUrl)) {
         socket.emit("messageError", {
           message: "Missing data for sending message.",
         });
@@ -64,12 +76,18 @@ function initializeSocketIO(io) {
       }
 
       try {
-        // 1. Save the message to the database (default status is 'sent')
+        // 1. Save the message to the database
         let newMessage = new MessageSocket({
           conversationId,
           sender: senderId,
           content,
-          readBy: [senderId], // The sender has implicitly "read" their own message
+          fileUrl: fileUrl || "",
+          fileType: fileType || "",
+          fileName: fileName || "",
+          readBy: [senderId],
+          replyTo: replyTo || null,
+          replySnippet: replySnippet || "",
+          replySenderName: replySenderName || "",
         });
         await newMessage.save();
 

@@ -3,14 +3,21 @@ import 'dart:async';
 import 'dart:io'; // For File
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart'; // For ImagePicker
+import 'package:file_picker/file_picker.dart';
 import '../services/services_locator.dart';
 import '../models/conversation_model.dart';
 import '../models/message_model.dart';
 import '../models/user_model.dart';
 import '../widgets/user_avatar.dart';
+import '../config/api_constants.dart';
 import 'package:intl/intl.dart';
 import 'home_screen.dart';
 import 'add_members_to_group_screen.dart';
+import 'file_preview_screen.dart';
+import 'photo_viewer_screen.dart';
+import 'syncfusion_pdf_viewer_screen.dart';
+
+import '../config/api_constants.dart';
 import 'profile_screen.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -36,6 +43,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   final ScrollController _scrollController = ScrollController();
   List<Message> _messages = [];
   bool _isLoadingMessages = true;
+  bool _isUploadingFile = false;
   String? _errorMessage;
   StreamSubscription? _messageSubscription;
   StreamSubscription? _typingSubscription;
@@ -43,12 +51,15 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   StreamSubscription? _conversationUpdateSubscription;
   StreamSubscription? _messageStatusUpdateSubscription;
 
+  Message? _replyingToMessage;
+
   User? _currentUser;
   late Conversation _currentConversation;
 
   bool _isOtherUserTyping = false;
   bool _isTargetUserOnline = false;
   Timer? _typingTimer;
+  String? _downloadingFileId;
   bool _isLeavingGroup = false;
   // Tracks loading state for remove/make admin/demote admin for a specific member
   // Key: Member ID, Value: true if an admin action is in progress for this member
@@ -235,6 +246,134 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     }
   }
 
+  // Method to show options
+  void _showMessageOptions(BuildContext context, Message message) {
+    // Only show options for the current user's own messages that are not deleted
+    if (message.sender.id != _currentUser?.id || message.deletedAt != null)
+      return;
+
+    showModalBottomSheet(
+      context: context,
+      builder: (BuildContext bc) {
+        return SafeArea(
+          child: Wrap(
+            children: <Widget>[
+              ListTile(
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('Edit'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _showEditDialog(message);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: Colors.red),
+                title: const Text(
+                  'Delete',
+                  style: TextStyle(color: Colors.red),
+                ),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _showDeleteConfirmation(message);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // Method to show the edit dialog
+  void _showEditDialog(Message message) {
+    final controller = TextEditingController(text: message.content);
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Edit Message'),
+            content: TextField(
+              controller: controller,
+              autofocus: true,
+              maxLines: null,
+            ),
+            actions: [
+              TextButton(
+                child: const Text('Cancel'),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+              TextButton(
+                child: const Text('Save'),
+                onPressed: () async {
+                  try {
+                    final updatedMessage = await chatService.editMessage(
+                      message.id,
+                      controller.text,
+                    );
+                    // Find and update the message in the local list
+                    setState(() {
+                      final index = _messages.indexWhere(
+                        (m) => m.id == updatedMessage.id,
+                      );
+                      if (index != -1) {
+                        _messages[index] = updatedMessage;
+                      }
+                    });
+                  } catch (e) {
+                    /* handle error */
+                  }
+                  Navigator.of(context).pop();
+                },
+              ),
+            ],
+          ),
+    );
+  }
+
+  // Method to confirm deletion
+  void _showDeleteConfirmation(Message message) {
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Delete Message?'),
+            content: const Text(
+              'This message will be permanently deleted for everyone.',
+            ),
+            actions: [
+              TextButton(
+                child: const Text('Cancel'),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+              TextButton(
+                child: const Text(
+                  'Delete',
+                  style: TextStyle(color: Colors.red),
+                ),
+                onPressed: () async {
+                  try {
+                    final updatedMessage = await chatService.deleteMessage(
+                      message.id,
+                    );
+                    setState(() {
+                      final index = _messages.indexWhere(
+                        (m) => m.id == updatedMessage.id,
+                      );
+                      if (index != -1) {
+                        _messages[index] = updatedMessage;
+                      }
+                    });
+                  } catch (e) {
+                    /* handle error */
+                  }
+                  Navigator.of(context).pop();
+                },
+              ),
+            ],
+          ),
+    );
+  }
+
   @override
   void dispose() {
     _messageController.dispose();
@@ -314,10 +453,91 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       conversationId: _currentConversation.id,
       senderId: _currentUser!.id,
       content: text,
+      replyTo: _replyingToMessage?.id,
+      replySnippet: _replyingToMessage?.content,
+      replySenderName: _replyingToMessage?.sender.fullName,
     );
     _messageController.clear();
     if (!isGroupChat) _emitStopTyping();
     _scrollToBottom();
+
+    if (_replyingToMessage != null) {
+      setState(() {
+        _replyingToMessage = null;
+      });
+    }
+  }
+
+  Future<void> _pickAndSendFile() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: [
+          'jpg',
+          'jpeg',
+          'png',
+          'gif',
+          'pdf',
+          'doc',
+          'docx',
+          'mp4',
+          'mov',
+        ],
+      );
+
+      if (result != null && result.files.single.path != null) {
+        File file = File(result.files.single.path!);
+
+        // <<< MODIFIED: Navigate to Preview Screen >>>
+        // We push the new screen and wait for it to pop. It will return the caption.
+        final String? caption = await Navigator.of(context).push<String>(
+          MaterialPageRoute(
+            builder: (context) => FilePreviewScreen(file: file),
+          ),
+        );
+
+        // If the user closed the preview screen without sending, caption will be null.
+        if (caption == null) return;
+
+        // If the user pressed send, proceed with uploading and sending the message
+        setState(() => _isUploadingFile = true);
+
+        // 1. Upload the file
+        final fileData = await chatService.uploadChatFile(file);
+
+        // 2. Send the message via socket with the file URL and caption
+        socketService.sendMessage(
+          conversationId: _currentConversation.id,
+          senderId: _currentUser!.id,
+          content: caption, // Use the caption from the preview screen
+          fileUrl: fileData['fileUrl'],
+          fileType: fileData['fileType'],
+          fileName: fileData['fileName'],
+          replyTo: _replyingToMessage?.id,
+          replySnippet: _replyingToMessage?.content,
+          replySenderName: _replyingToMessage?.sender.fullName,
+        );
+
+        if (_replyingToMessage != null) {
+          setState(() {
+            _replyingToMessage = null;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to send file: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isUploadingFile = false);
+      }
+    }
   }
 
   void _scrollToBottom({bool KindaSoon = false}) {
@@ -1273,15 +1493,108 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             1;
   }
 
-  Widget _buildMessageItem(Message message, bool isConsecutive) {
-    final bool isMe = message.sender.id == _currentUser?.id;
-    final Radius cornerRadius = const Radius.circular(18.0);
-    final Radius tailRadius = const Radius.circular(4.0);
+  // In lib/screens/chat_screen.dart -> inside _ChatScreenState
+
+  // This method builds the preview widget that appears above the text input field
+  Widget _buildReplyPreview() {
+    // This will never be null when the widget is built, so we can use `!`
+    final messageToReplyTo = _replyingToMessage!;
+    final bool isReplyingToSelf =
+        messageToReplyTo.sender.id == _currentUser?.id;
 
     return Container(
-      // Reduce top margin for consecutive messages
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      margin: const EdgeInsets.fromLTRB(10, 0, 10, 4), // Margin for spacing
+      decoration: BoxDecoration(
+        color: Theme.of(context).primaryColor.withOpacity(0.08),
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(12),
+          topRight: Radius.circular(12),
+        ),
+        // A colored left border to indicate a reply
+        border: Border(
+          left: BorderSide(color: Theme.of(context).primaryColor, width: 4),
+        ),
+      ),
+      child: Row(
+        children: [
+          // The main content of the preview
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  // Show "You" if replying to your own message
+                  isReplyingToSelf ? 'You' : messageToReplyTo.sender.fullName,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Theme.of(context).primaryColor,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  // If it's a file message, show the file name. Otherwise, show text content.
+                  (messageToReplyTo.fileUrl != null &&
+                          messageToReplyTo.fileUrl!.isNotEmpty)
+                      ? "📄 ${messageToReplyTo.fileName ?? "File"}"
+                      : messageToReplyTo.content,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          // A close button to cancel the reply action
+          IconButton(
+            icon: const Icon(Icons.close, size: 20),
+            onPressed: () {
+              setState(() {
+                // Clear the reply state when the user taps close
+                _replyingToMessage = null;
+              });
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessageItem(Message message, bool isConsecutive) {
+    final bool isMe = message.sender.id == _currentUser?.id;
+    final bool isDeleted = message.deletedAt != null;
+
+    // First, determine the core content of the bubble.
+    // The helper methods (_buildTextBubble, _buildFileBubble) are now responsible
+    // for also including the reply preview inside them.
+    Widget messageContent;
+    if (isDeleted) {
+      // If deleted, it's always a simple text bubble with placeholder content.
+      messageContent = _buildTextBubble(
+        message,
+        isMe,
+        BorderRadius.circular(18.0),
+      );
+    } else if (message.fileUrl != null && message.fileUrl!.isNotEmpty) {
+      // If it has a file, build the file bubble.
+      messageContent = _buildFileBubble(
+        message,
+        isMe,
+        BorderRadius.circular(18.0),
+      );
+    } else {
+      // Otherwise, it's a standard text bubble.
+      messageContent = _buildTextBubble(
+        message,
+        isMe,
+        BorderRadius.circular(18.0),
+      );
+    }
+
+    // Now, we build the full message layout, including avatar, gestures, and metadata.
+    return Container(
       margin: EdgeInsets.only(
         top: isConsecutive ? 4.0 : 12.0,
+        bottom: 4.0,
         left: 16.0,
         right: 16.0,
       ),
@@ -1290,23 +1603,26 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          if (!isMe)
-            // Show avatar only for the last message in a consecutive block from others
-            Opacity(
-              opacity: !isConsecutive ? 1.0 : 0.0,
-              child: UserAvatar(
-                imageUrl: message.sender.profilePictureUrl,
-                userName: message.sender.fullName,
-                radius: 16,
-              ),
-            ),
+          // Show avatar for the other user on non-consecutive messages.
+          if (!isMe && !isConsecutive)
+            UserAvatar(
+              imageUrl: message.sender.profilePictureUrl,
+              userName: message.sender.fullName,
+              radius: 16,
+            )
+          else if (!isMe)
+            const SizedBox(
+              width: 32,
+            ), // Keep alignment for consecutive messages.
+
           const SizedBox(width: 8),
+
           Flexible(
             child: Column(
               crossAxisAlignment:
                   isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
               children: [
-                // Show sender's name only for the first message in a block in group chats
+                // Show sender's name in group chats for non-consecutive messages.
                 if (!isMe && isGroupChat && !isConsecutive)
                   Padding(
                     padding: const EdgeInsets.only(left: 12.0, bottom: 4.0),
@@ -1315,66 +1631,425 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                       style: TextStyle(fontSize: 12.0, color: Colors.grey[600]),
                     ),
                   ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14.0,
-                    vertical: 10.0,
-                  ),
-                  decoration: BoxDecoration(
-                    color:
-                        isMe
-                            ? Theme.of(context).primaryColor
-                            : Theme.of(context).cardColor,
-                    borderRadius: BorderRadius.only(
-                      topLeft: cornerRadius,
-                      topRight: cornerRadius,
-                      // "Tail" points towards sender
-                      bottomLeft: isMe ? cornerRadius : tailRadius,
-                      bottomRight: isMe ? tailRadius : cornerRadius,
+
+                // The main message bubble, now wrapped in all necessary gestures.
+                // The reply preview is now handled *inside* the messageContent widget.
+                Dismissible(
+                  key: Key(message.id),
+                  direction: DismissDirection.startToEnd,
+                  confirmDismiss: (direction) async {
+                    if (!isDeleted) {
+                      setState(() {
+                        _replyingToMessage = message;
+                      });
+                    }
+                    return false; // Prevent dismissal.
+                  },
+                  background: Align(
+                    alignment:
+                        isMe ? Alignment.centerRight : Alignment.centerLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                      child: Icon(
+                        Icons.reply,
+                        color: isMe ? Colors.white : Colors.black54,
+                      ),
                     ),
                   ),
-                  child: Text(
-                    message.content,
-                    style: TextStyle(
-                      color: isMe ? Colors.white : Colors.black87,
-                      fontSize: 15.5,
-                      height: 1.35,
-                    ),
+                  child: GestureDetector(
+                    onLongPress: () => _showMessageOptions(context, message),
+                    child: messageContent,
                   ),
                 ),
+
+                // Timestamp and read receipt status.
                 Padding(
                   padding: const EdgeInsets.only(
                     top: 4.0,
-                    left: 8.0,
-                    right: 8.0,
+                    left: 12.0,
+                    right: 12.0,
                   ),
-                  child: Text(
-                    _formatMessageTimestamp(message.createdAt),
-                    style: TextStyle(fontSize: 11.0, color: Colors.grey[500]),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _formatMessageTimestamp(message.createdAt),
+                        style: TextStyle(
+                          fontSize: 11.0,
+                          color: Colors.grey[500],
+                        ),
+                      ),
+                      if (isMe && !isDeleted) ...[
+                        const SizedBox(width: 5),
+                        Icon(
+                          message.status == 'read'
+                              ? Icons.done_all_rounded
+                              : message.status == 'delivered'
+                              ? Icons.done_all_rounded
+                              : Icons.done_rounded,
+                          size: 16.0,
+                          color:
+                              message.status == 'read'
+                                  ? Colors.blueAccent
+                                  : Colors.grey[500],
+                        ),
+                      ],
+                    ],
                   ),
                 ),
-                if (isMe) ...[
-                  const SizedBox(width: 5),
-                  Icon(
-                    message.status == 'read'
-                        ? Icons.done_all_rounded
-                        : message.status == 'delivered'
-                        ? Icons.done_all_rounded
-                        : Icons.done_rounded,
-                    size: 16.0,
-                    color:
-                        message.status == 'read'
-                            ? Colors
-                                .blueAccent // Blue ticks for 'read'
-                            : Colors.grey[500],
-                  ),
-                ],
               ],
             ),
           ),
-          if (isMe) const SizedBox(width: 8),
         ],
       ),
+    );
+  }
+
+  // In lib/screens/chat_screen.dart -> inside _ChatScreenState
+
+  Widget _buildReplyPreviewWidget(Message message, bool isMe) {
+    return GestureDetector(
+      onTap: () {
+        // TODO: In a future step, you can implement scroll-to-message functionality here.
+        // For now, it's just a visual element.
+        print("Tapped reply context for message ID: ${message.replyTo}");
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          // Use a slightly different color to distinguish the reply context from the main bubble
+          color:
+              isMe
+                  ? Colors.white.withOpacity(0.2)
+                  : Colors.black.withOpacity(0.05),
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(12),
+            topRight: Radius.circular(12),
+            bottomLeft: Radius.circular(12),
+            bottomRight: Radius.circular(12),
+          ),
+          // The colored left border is a common UI pattern for replies
+          border: Border(
+            left: BorderSide(
+              color:
+                  isMe
+                      ? Colors.lightBlue.shade200
+                      : Theme.of(context).primaryColor,
+              width: 4,
+            ),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              // Display the name of the person who sent the original message
+              message.replySenderName ?? "User",
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color:
+                    isMe
+                        ? Colors.lightBlue.shade100
+                        : Theme.of(context).primaryColor,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              // Display a snippet of the original message content or its file name
+              (message.replySnippet != null && message.replySnippet!.isNotEmpty)
+                  ? message.replySnippet!
+                  : "📄 File", // Fallback for file replies with no text
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                color:
+                    isMe
+                        ? const Color.fromARGB(
+                          255,
+                          247,
+                          245,
+                          245,
+                        ).withOpacity(0.9)
+                        : Colors.black87,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTextBubble(
+    Message message,
+    bool isMe,
+    BorderRadius borderRadius,
+  ) {
+    final bool isDeleted = message.deletedAt != null;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
+      decoration: BoxDecoration(
+        color:
+            isMe
+                ? (isDeleted
+                    ? Colors.grey[800]
+                    : Theme.of(context).primaryColor)
+                : (isDeleted ? Colors.grey[300] : Theme.of(context).cardColor),
+        borderRadius: borderRadius,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (message.replyTo != null && !isDeleted)
+            _buildReplyPreviewWidget(message, isMe),
+
+          Text(
+            isDeleted ? "This message was deleted" : message.content,
+            style: TextStyle(
+              color: isMe ? Colors.white : Colors.black87,
+              fontSize: 15.5,
+              height: 1.35,
+              fontStyle: isDeleted ? FontStyle.italic : FontStyle.normal,
+            ),
+          ),
+          if (message.isEdited && !isDeleted)
+            Padding(
+              padding: const EdgeInsets.only(top: 4.0),
+              child: Text(
+                "(edited)",
+                style: TextStyle(
+                  fontSize: 12,
+                  color: isMe ? Colors.white70 : Colors.black54,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // In lib/screens/chat_screen.dart -> inside _ChatScreenState
+
+  // 1. This is the main method you'll call from your list builder.
+  // It decides which kind of bubble to build and handles the tap.
+  Widget _buildFileBubble(
+    Message message,
+    bool isMe,
+    BorderRadius borderRadius,
+  ) {
+    final fileType = message.fileType ?? '';
+    final isImage = fileType.startsWith('image/');
+    final isPdf = fileType == 'application/pdf';
+
+    // Decide what UI to show inside the bubble
+    Widget fileContent;
+    if (isImage) {
+      fileContent = _buildImageContent(message, isMe);
+    } else {
+      fileContent = _buildGenericFileContent(message, isMe, isPdf);
+    }
+
+    // Return the final bubble, wrapped in a container and a gesture detector
+    return Container(
+      width: MediaQuery.of(context).size.width * 0.65,
+      decoration: BoxDecoration(
+        color:
+            isMe
+                ? Theme.of(context).primaryColor.withAlpha(220)
+                : Theme.of(context).cardColor,
+        borderRadius: borderRadius,
+      ),
+      // Use a ClipRRect to ensure the ripple effect from GestureDetector respects the bubble's border radius
+      child: ClipRRect(
+        borderRadius: borderRadius,
+        child: GestureDetector(
+          onTap: () {
+            final fullFileUrl = '$SERVER_ROOT_URL${message.fileUrl!}';
+
+            if (isImage) {
+              // Image viewing remains the same
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder:
+                      (context) => PhotoViewerScreen(
+                        imageUrl: fullFileUrl,
+                        heroTag: message.id,
+                      ),
+                ),
+              );
+            } else if (isPdf) {
+              // <<< MODIFIED: Navigate to the new Syncfusion viewer screen >>>
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder:
+                      (context) => SyncfusionPdfViewerScreen(
+                        fileUrl: fullFileUrl,
+                        fileName: message.fileName ?? 'document.pdf',
+                      ),
+                ),
+              );
+            } else {
+              // For other files, you can still use url_launcher if you want
+              // Or just show a message
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text("This file type can't be opened in the app."),
+                ),
+              );
+            }
+          },
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Conditionally add the reply preview widget if this is a reply
+              if (message.replyTo != null)
+                Padding(
+                  // Add some padding to space it nicely inside the bubble
+                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+                  child: _buildReplyPreviewWidget(message, isMe),
+                ),
+
+              // The file content (image or generic file) goes here
+              fileContent,
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 2. A helper method specifically for building the image bubble's content
+  Widget _buildImageContent(Message message, bool isMe) {
+    final fullImageUrl = '$SERVER_ROOT_URL${message.fileUrl!}';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // The Hero widget allows for the smooth animation to the full-screen view
+        Hero(
+          tag: message.id, // Must be a unique tag
+          child: ClipRRect(
+            // This ensures the image corners are rounded only at the top
+            borderRadius: const BorderRadius.vertical(
+              top: Radius.circular(18.0),
+            ),
+            child: Image.network(
+              fullImageUrl,
+              height: 200,
+              fit: BoxFit.cover,
+              // Show a loading indicator while the image downloads
+              loadingBuilder: (context, child, progress) {
+                if (progress == null) return child;
+                return Container(
+                  height: 200,
+                  child: Center(
+                    child: CircularProgressIndicator(
+                      value:
+                          progress.expectedTotalBytes != null
+                              ? progress.cumulativeBytesLoaded /
+                                  progress.expectedTotalBytes!
+                              : null,
+                      color:
+                          isMe ? Colors.white : Theme.of(context).primaryColor,
+                    ),
+                  ),
+                );
+              },
+              // Show an error icon if the image fails to load
+              errorBuilder:
+                  (context, error, stack) => Container(
+                    height: 200,
+                    child: Icon(
+                      Icons.broken_image,
+                      size: 50,
+                      color: isMe ? Colors.white70 : Colors.grey,
+                    ),
+                  ),
+            ),
+          ),
+        ),
+        // Display the caption below the image if it exists
+        if (message.content.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+            child: Text(
+              message.content,
+              style: TextStyle(color: isMe ? Colors.white : Colors.black87),
+            ),
+          ),
+      ],
+    );
+  }
+
+  // 3. A helper method for building PDF and other file type bubbles
+  Widget _buildGenericFileContent(Message message, bool isMe, bool isPdf) {
+    // Check if the current message's ID matches the one being downloaded
+    final bool isDownloading = _downloadingFileId == message.id;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              // If this specific file is downloading, show a progress indicator.
+              // Otherwise, show the appropriate file icon.
+              if (isDownloading)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8.0),
+                  child: SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      color:
+                          isMe ? Colors.white : Theme.of(context).primaryColor,
+                    ),
+                  ),
+                )
+              else
+                Icon(
+                  isPdf
+                      ? Icons.picture_as_pdf_rounded
+                      : Icons.insert_drive_file_outlined,
+                  color:
+                      isMe
+                          ? Colors.white
+                          : (isPdf
+                              ? Colors.red.shade700
+                              : Colors.grey.shade700),
+                  size: 30,
+                ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  message.fileName ?? 'File',
+                  style: TextStyle(
+                    color: isMe ? Colors.white : Colors.black87,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+        // Display the caption below the file info if it exists
+        if (message.content.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+            child: Text(
+              message.content,
+              style: TextStyle(color: isMe ? Colors.white : Colors.black87),
+            ),
+          ),
+      ],
     );
   }
 
@@ -1435,9 +2110,12 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
+  // In lib/screens/chat_screen.dart
+
   @override
   Widget build(BuildContext context) {
-    if (_currentUser == null)
+    // This initial check is good.
+    if (_currentUser == null) {
       return Scaffold(
         body: Center(
           child: Text(
@@ -1446,6 +2124,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           ),
         ),
       );
+    }
+
+    // This is the main screen layout
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
@@ -1516,6 +2197,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       ),
       body: Column(
         children: [
+          // 1. THE MESSAGE LIST
           Expanded(
             child:
                 _isLoadingMessages
@@ -1535,67 +2217,49 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                       ),
                     )
                     : _messages.isEmpty
-                    ? Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(20.0),
-                        child: Text(
-                          isGroupChat
-                              ? 'No messages in this group yet.\nBe the first to say something!'
-                              : 'No messages yet.\nStart the conversation with ${widget.otherUser.fullName.split(' ').first}!',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 16,
-                            color: Colors.grey[600],
-                            height: 1.5,
-                          ),
-                        ),
-                      ),
-                    )
-                    // <<< MODIFIED: Replaced ListView.builder with AnimatedList >>>
+                    ? Center(/* ... your empty message placeholder ... */)
                     : AnimatedList(
                       key: _listKey,
                       controller: _scrollController,
+                      reverse:
+                          false, // Keep this to show latest messages at the bottom
                       padding: const EdgeInsets.symmetric(vertical: 10.0),
                       initialItemCount: _messages.length,
+                      // The itemBuilder's job is to build each list item.
+                      // It should NOT call the parent _buildMessageItem method.
                       itemBuilder: (context, index, animation) {
-                        final bool showDateSeparator = _shouldShowDateSeparator(
+                        final message = _messages[index];
+                        final isConsecutive = _isConsecutiveMessage(index);
+                        final showDateSeparator = _shouldShowDateSeparator(
                           index,
                         );
-                        final bool isConsecutive = _isConsecutiveMessage(index);
-                        final message = _messages[index];
 
-                        Widget messageWidget = _buildMessageItem(
+                        // The actual message bubble widget is built by our helper
+                        final messageWidget = _buildMessageItem(
                           message,
                           isConsecutive,
                         );
-                        if (showDateSeparator) {
-                          messageWidget = Column(
-                            children: [
-                              _DateSeparator(message.createdAt.toLocal()),
-                              messageWidget,
-                            ],
-                          );
-                        }
 
-                        // Wrap the message item with a slide/fade transition
-                        return FadeTransition(
-                          opacity: animation,
-                          child: SlideTransition(
-                            position: Tween<Offset>(
-                              begin: const Offset(0.0, 0.5),
-                              end: Offset.zero,
-                            ).animate(
-                              CurvedAnimation(
-                                parent: animation,
-                                curve: Curves.easeOut,
-                              ),
+                        // We combine the date separator and the message bubble here
+                        return Column(
+                          children: [
+                            if (showDateSeparator)
+                              _DateSeparator(message.createdAt.toLocal()),
+                            FadeTransition(
+                              opacity: animation,
+                              child: messageWidget,
                             ),
-                            child: messageWidget,
-                          ),
+                          ],
                         );
                       },
                     ),
           ),
+
+          // 2. THE REPLY PREVIEW WIDGET (Conditional)
+          // This is the correct location. It will only show up when you swipe to reply.
+          if (_replyingToMessage != null) _buildReplyPreview(),
+
+          // 3. THE MESSAGE INPUT WIDGET
           _buildMessageInput(),
         ],
       ),
@@ -1618,6 +2282,24 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
+            // <<< NEW: Attachment Button >>>
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4.0, left: 4.0),
+              child: IconButton(
+                icon:
+                    _isUploadingFile
+                        ? SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2.5),
+                        )
+                        : Icon(
+                          Icons.attach_file_rounded,
+                          color: Colors.grey[600],
+                        ),
+                onPressed: _isUploadingFile ? null : _pickAndSendFile,
+              ),
+            ),
             Expanded(
               child: Container(
                 margin: const EdgeInsets.symmetric(vertical: 4.0),

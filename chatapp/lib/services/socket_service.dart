@@ -122,12 +122,24 @@ class SocketService {
     required String conversationId,
     required String senderId,
     required String content,
+    String? fileUrl,
+    String? fileType,
+    String? fileName,
+    String? replyTo,
+    String? replySnippet,
+    String? replySenderName,
   }) {
     if (_socket != null && _socket!.connected) {
       _socket!.emit('sendMessage', {
         'conversationId': conversationId,
         'senderId': senderId,
         'content': content,
+        'fileUrl': fileUrl,
+        'fileType': fileType,
+        'fileName': fileName,
+        'replyTo': replyTo,
+        'replySnippet': replySnippet,
+        'replySenderName': replySenderName,
       });
     }
   }

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:mime/mime.dart';
 import 'package:http_parser/http_parser.dart';
+import 'package:mime/mime.dart';
 
 import '../config/api_constants.dart';
 import '../models/conversation_model.dart';
@@ -99,6 +100,43 @@ class ChatService {
       }
     } catch (e) {
       throw Exception('Failed to load messages: ${e.toString()}');
+    }
+  }
+
+  // <<< NEW METHOD: Upload a file for a chat >>>
+  Future<Map<String, dynamic>> uploadChatFile(File file) async {
+    final token = await _tokenStorageService.getToken();
+    if (token == null) throw Exception('Not authenticated: No token found.');
+
+    try {
+      final uri = Uri.parse('$_messagesBaseUrl/upload-file');
+      var request = http.MultipartRequest('POST', uri);
+      request.headers['Authorization'] = 'Bearer $token';
+
+      final mimeTypeData = lookupMimeType(file.path)?.split('/');
+
+      final multipartFile = await http.MultipartFile.fromPath(
+        'chatfile', // This must match the field name in the backend middleware
+        file.path,
+        contentType:
+            mimeTypeData != null
+                ? MediaType(mimeTypeData[0], mimeTypeData[1])
+                : MediaType('application', 'octet-stream'),
+      );
+
+      request.files.add(multipartFile);
+
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+      final responseData = jsonDecode(response.body);
+
+      if (response.statusCode == 200) {
+        return responseData; // Returns { message, fileUrl, fileName, fileType }
+      } else {
+        throw Exception(responseData['message'] ?? 'Failed to upload file');
+      }
+    } catch (e) {
+      throw Exception('Failed to upload file: ${e.toString()}');
     }
   }
 
@@ -395,6 +433,38 @@ class ChatService {
     } catch (e) {
       print('ChatService demoteAdmin: Exception - $e');
       throw Exception('Failed to demote admin: ${e.toString()}');
+    }
+  }
+
+  Future<Message> editMessage(String messageId, String newContent) async {
+    final token = await _tokenStorageService.getToken();
+    if (token == null) throw Exception('Not authenticated');
+    final response = await http.put(
+      Uri.parse('$_messagesBaseUrl/$messageId/edit'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json; charset=UTF-8',
+      },
+      body: jsonEncode({'content': newContent}),
+    );
+    if (response.statusCode == 200) {
+      return Message.fromJson(jsonDecode(response.body));
+    } else {
+      throw Exception('Failed to edit message');
+    }
+  }
+
+  Future<Message> deleteMessage(String messageId) async {
+    final token = await _tokenStorageService.getToken();
+    if (token == null) throw Exception('Not authenticated');
+    final response = await http.delete(
+      Uri.parse('$_messagesBaseUrl/$messageId'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    if (response.statusCode == 200) {
+      return Message.fromJson(jsonDecode(response.body));
+    } else {
+      throw Exception('Failed to delete message');
     }
   }
 }

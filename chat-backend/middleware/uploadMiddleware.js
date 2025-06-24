@@ -3,24 +3,22 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs"); // File system module
 
-// Ensure the upload directory exists
-const uploadDir = path.join(__dirname, "..", "uploads", "profile_pictures"); // Adjust path to be relative to project root
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true }); // recursive: true creates parent directories if they don't exist
-  console.log(`Created directory: ${uploadDir}`);
-} else {
-  console.log(`Upload directory already exists: ${uploadDir}`);
+// --- Configuration for Profile Avatars ---
+const profileUploadDir = path.join(
+  __dirname,
+  "..",
+  "uploads",
+  "profile_pictures"
+);
+if (!fs.existsSync(profileUploadDir)) {
+  fs.mkdirSync(profileUploadDir, { recursive: true });
 }
 
-// Set up storage engine for multer
-const storage = multer.diskStorage({
+const profilePictureStorage = multer.diskStorage({
   destination: function (req, file, cb) {
-    // The destination path should be correct and accessible
-    cb(null, uploadDir);
+    cb(null, profileUploadDir);
   },
   filename: function (req, file, cb) {
-    // Create a unique filename: fieldname-timestamp.extension
-    // req.user should be populated by the authMiddleware if this route is protected
     const userId = req.user ? req.user._id : "anonymous";
     cb(
       null,
@@ -29,15 +27,10 @@ const storage = multer.diskStorage({
   },
 });
 
-// File filter to accept only images
-const fileFilter = (req, file, cb) => {
-  // Allowed ext
+const imageFileFilter = (req, file, cb) => {
   const filetypes = /jpeg|jpg|png|gif/;
-  // Check ext
   const extname = filetypes.test(path.extname(file.originalname).toLowerCase());
-  // Check mime
   const mimetype = filetypes.test(file.mimetype);
-
   if (mimetype && extname) {
     return cb(null, true);
   } else {
@@ -45,35 +38,78 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-// Initialize upload variable
+// Original 'upload' for avatars
 const upload = multer({
-  storage: storage,
-  limits: { fileSize: 2 * 1024 * 1024 }, // Limit file size to 2MB
-  fileFilter: fileFilter,
+  storage: profilePictureStorage,
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: imageFileFilter,
 });
 
-// Middleware to handle multer errors, especially from fileFilter
+// --- Configuration for Chat Files ---
+const chatUploadDir = path.join(__dirname, "..", "uploads", "chat_files");
+if (!fs.existsSync(chatUploadDir)) {
+  fs.mkdirSync(chatUploadDir, { recursive: true });
+}
+
+const chatFileStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, chatUploadDir);
+  },
+  filename: function (req, file, cb) {
+    const userId = req.user ? req.user._id : "anonymous";
+    cb(null, `file-${userId}-${Date.now()}${path.extname(file.originalname)}`);
+  },
+});
+
+const chatFileFilter = (req, file, cb) => {
+  // Allow a wider range of file types for chat
+  const allowedMimes = [
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "video/mp4",
+    "video/quicktime",
+  ];
+  if (allowedMimes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error("Error: Invalid file type."), false);
+  }
+};
+
+// New 'uploadChatFile' for chat messages
+const uploadChatFile = multer({
+  storage: chatFileStorage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: chatFileFilter,
+});
+
+// --- Shared Multer Error Handler ---
 const handleMulterError = (err, req, res, next) => {
   if (err instanceof multer.MulterError) {
-    // A Multer error occurred when uploading.
     if (err.code === "LIMIT_FILE_SIZE") {
       return res
         .status(400)
-        .json({ message: "File too large. Maximum size is 2MB." });
+        .json({
+          message: `File too large. Maximum size is ${
+            err.limit / 1024 / 1024
+          }MB.`,
+        });
     }
     return res.status(400).json({ message: err.message });
   } else if (err) {
-    // An unknown error occurred when uploading.
-    if (err.message === "Error: Images Only! (jpeg, jpg, png, gif)") {
-      return res.status(400).json({ message: err.message });
-    }
-    console.error("Unknown upload error:", err);
-    return res
-      .status(500)
-      .json({ message: "An unknown error occurred during file upload." });
+    return res.status(400).json({ message: err.message });
   }
-  // Everything went fine.
   next();
 };
 
-module.exports = { upload, handleMulterError };
+// --- EXPORT ALL MIDDLEWARE ---
+// This is the most important part. Ensure all your uploaders are exported.
+module.exports = {
+  upload,
+  uploadChatFile, // Make sure this is exported
+  handleMulterError,
+};
