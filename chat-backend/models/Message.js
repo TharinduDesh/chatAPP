@@ -3,6 +3,16 @@
 const mongooseMsg = require("mongoose");
 const SchemaMsg = mongooseMsg.Schema;
 
+// Define a schema for a single reaction
+const reactionSchema = new SchemaMsg(
+  {
+    emoji: { type: String, required: true },
+    user: { type: SchemaMsg.Types.ObjectId, ref: "User", required: true },
+    userName: { type: String, required: true }, // Store user's name for easy display
+  },
+  { _id: false }
+);
+
 const messageSchema = new SchemaMsg(
   {
     conversationId: {
@@ -13,13 +23,20 @@ const messageSchema = new SchemaMsg(
     sender: {
       type: SchemaMsg.Types.ObjectId,
       ref: "User",
-      required: true,
+      required: false,
     },
     content: {
       type: String,
       trim: true,
     },
-    // <<< NEW: Fields for file sharing >>>
+    // Field to identify message type
+    messageType: {
+      type: String,
+      enum: ["text", "image", "audio", "video", "system"],
+      default: "text",
+    },
+    reactions: [reactionSchema],
+    // Fields for file sharing
     fileUrl: {
       type: String,
       default: "",
@@ -63,6 +80,7 @@ const messageSchema = new SchemaMsg(
       type: String,
       default: "",
     },
+
     // The 'readBy' array from the unread message feature can coexist or be removed
     // if you prefer this status-based approach for all chat types.
     // For this feature, we will assume `status` is for 1-to-1 and `readBy` is for unread counts.
@@ -78,6 +96,9 @@ const messageSchema = new SchemaMsg(
 
 // Index for faster querying of messages by conversation
 messageSchema.index({ conversationId: 1, createdAt: -1 });
+
+// Add a text index on the content field for searching
+messageSchema.index({ content: "text" });
 
 const Message = mongooseMsg.model("Message", messageSchema);
 module.exports = Message;

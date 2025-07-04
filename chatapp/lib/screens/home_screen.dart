@@ -11,7 +11,6 @@ import 'user_list_screen.dart';
 import 'chat_screen.dart';
 import '../widgets/user_avatar.dart';
 import 'package:intl/intl.dart';
-import 'select_group_members_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -22,8 +21,12 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   List<Conversation> _conversations = [];
+  List<Conversation> _filteredConversations = [];
   bool _isLoadingConversations = true;
   String? _errorMessage;
+
+  final TextEditingController _searchController = TextEditingController();
+
   StreamSubscription? _conversationUpdateSubscription;
   StreamSubscription? _newMessageSubscription;
   StreamSubscription? _activeUsersSubscription;
@@ -33,6 +36,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _initializeScreen();
+    _searchController.addListener(_filterConversations);
 
     _conversationUpdateSubscription = socketService.conversationUpdateStream
         .listen((updatedConv) {
@@ -47,6 +51,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _conversations.sort(
                   (a, b) => b.updatedAt.compareTo(a.updatedAt),
                 );
+                _filterConversations(); // Re-apply filter
               });
             } else {
               setState(() {
@@ -54,12 +59,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 _conversations.sort(
                   (a, b) => b.updatedAt.compareTo(a.updatedAt),
                 );
+                _filterConversations(); // Re-apply filter
               });
             }
           }
         });
 
-    // CORRECTED: Only one listener for new messages
     _newMessageSubscription = socketService.messageStream.listen((newMessage) {
       if (mounted) {
         final int conversationIndex = _conversations.indexWhere(
@@ -68,28 +73,31 @@ class _HomeScreenState extends State<HomeScreen> {
         if (conversationIndex != -1) {
           setState(() {
             Conversation oldConv = _conversations[conversationIndex];
+            bool shouldIncrementUnread = false;
+            // Only check the sender if it's not a system message.
+            if (newMessage.sender != null) {
+              shouldIncrementUnread =
+                  newMessage.sender!.id != authService.currentUser?.id;
+            }
             _conversations[conversationIndex] = Conversation(
               id: oldConv.id,
               participants: oldConv.participants,
               isGroupChat: oldConv.isGroupChat,
               groupName: oldConv.groupName,
-              groupAdmins:
-                  oldConv.groupAdmins, // Using correct 'groupAdmins' property
+              groupAdmins: oldConv.groupAdmins,
               groupPictureUrl: oldConv.groupPictureUrl,
               lastMessage: newMessage,
               createdAt: oldConv.createdAt,
               updatedAt: newMessage.createdAt,
-              // Increment unread count only if the message is from another user
               unreadCount:
-                  (newMessage.sender.id != authService.currentUser?.id)
+                  shouldIncrementUnread
                       ? (oldConv.unreadCount) + 1
                       : oldConv.unreadCount,
             );
-            // Bring the updated conversation to the top of the list
             _conversations.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+            _filterConversations(); // Re-apply filter
           });
         } else {
-          // If a message arrives for a conversation not in our list, refresh the whole list.
           _fetchConversations();
         }
       }
@@ -103,6 +111,35 @@ class _HomeScreenState extends State<HomeScreen> {
           _activeUserIds = activeIds.toSet();
         });
       }
+    });
+  }
+
+  @override
+  void dispose() {
+    _conversationUpdateSubscription?.cancel();
+    _newMessageSubscription?.cancel();
+    _activeUsersSubscription?.cancel();
+    _searchController.removeListener(_filterConversations);
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _filterConversations() {
+    final query = _searchController.text.toLowerCase();
+    setState(() {
+      _filteredConversations =
+          _conversations.where((convo) {
+            String displayName;
+            if (convo.isGroupChat) {
+              displayName = convo.groupName ?? '';
+            } else {
+              final otherUser = convo.getOtherParticipant(
+                authService.currentUser!.id,
+              );
+              displayName = otherUser?.fullName ?? 'Private Chat';
+            }
+            return displayName.toLowerCase().contains(query);
+          }).toList();
     });
   }
 
@@ -122,21 +159,14 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  @override
-  void dispose() {
-    _conversationUpdateSubscription?.cancel();
-    _newMessageSubscription?.cancel();
-    _activeUsersSubscription?.cancel();
-    super.dispose();
-  }
-
   Future<void> _fetchConversations() async {
     if (authService.currentUser == null) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _isLoadingConversations = false;
           _errorMessage = "Not logged in.";
         });
+      }
       return;
     }
     if (!mounted) return;
@@ -150,7 +180,9 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted) {
         setState(() {
           _conversations = conversations;
+          _filteredConversations = conversations;
           _isLoadingConversations = false;
+          _filterConversations(); // Apply filter on initial fetch
         });
       }
     } catch (e) {
@@ -175,32 +207,20 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _navigateToChatScreen(Conversation conversation) {
-    // Optimistically update the UI to clear the unread count immediately
     if (mounted && conversation.unreadCount > 0) {
       setState(() {
         final index = _conversations.indexWhere((c) => c.id == conversation.id);
         if (index != -1) {
           _conversations[index].unreadCount = 0;
+          _filterConversations();
         }
       });
     }
 
-    User? otherUser;
-    if (!conversation.isGroupChat &&
-        authService.currentUser != null &&
-        conversation.participants.isNotEmpty) {
-      try {
-        otherUser = conversation.participants.firstWhere(
-          (p) => p.id != authService.currentUser!.id,
-          orElse: () => conversation.participants.first,
-        );
-      } catch (e) {
-        otherUser =
-            conversation.participants.isNotEmpty
-                ? conversation.participants.first
-                : null;
-      }
-    }
+    User? otherUser =
+        conversation.isGroupChat
+            ? null
+            : conversation.getOtherParticipant(authService.currentUser!.id);
 
     Navigator.of(context)
         .push(
@@ -219,7 +239,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         )
         .then((_) {
-          // Upon returning, refresh list to get authoritative counts from server.
           _fetchConversations();
         });
   }
@@ -227,17 +246,18 @@ class _HomeScreenState extends State<HomeScreen> {
   String _formatTimestamp(DateTime dateTime) {
     final now = DateTime.now();
     final localDateTime = dateTime.toLocal();
-    if (now.year == localDateTime.year &&
-        now.month == localDateTime.month &&
-        now.day == localDateTime.day)
+    if (DateUtils.isSameDay(now, localDateTime)) {
       return DateFormat.jm().format(localDateTime);
-    if (now.year == localDateTime.year &&
-        now.month == localDateTime.month &&
-        now.day - localDateTime.day == 1)
+    }
+    if (DateUtils.isSameDay(
+      now.subtract(const Duration(days: 1)),
+      localDateTime,
+    )) {
       return 'Yesterday';
-    if (now.difference(localDateTime).inDays < 7 &&
-        now.weekday > localDateTime.weekday)
+    }
+    if (now.difference(localDateTime).inDays < 7) {
       return DateFormat.E().format(localDateTime);
+    }
     return DateFormat('dd/MM/yy').format(localDateTime);
   }
 
@@ -310,9 +330,40 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildNoResults() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.search_off, size: 80, color: Colors.grey[400]),
+            const SizedBox(height: 20),
+            Text(
+              'No Results Found',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[700],
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'No chats match your search for "${_searchController.text}".',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                color: Colors.grey[600],
+                height: 1.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildConversationList() {
     if (_isLoadingConversations) return _buildShimmerLoading();
-    if (_errorMessage != null)
+    if (_errorMessage != null) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(16.0),
@@ -336,11 +387,15 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       );
-    if (_conversations.isEmpty) return _buildEmptyState();
+    }
+
+    if (_filteredConversations.isEmpty) {
+      return _conversations.isEmpty ? _buildEmptyState() : _buildNoResults();
+    }
 
     return ListView.separated(
       padding: const EdgeInsets.symmetric(vertical: 4.0),
-      itemCount: _conversations.length,
+      itemCount: _filteredConversations.length,
       separatorBuilder:
           (context, index) => Divider(
             height: 1,
@@ -349,37 +404,43 @@ class _HomeScreenState extends State<HomeScreen> {
             color: Theme.of(context).dividerColor.withOpacity(0.15),
           ),
       itemBuilder: (context, index) {
-        final conversation = _conversations[index];
-        User? displayUserForAvatar;
-        String displayName;
-        String? displayImageUrl;
-        bool isUserOnline = false;
-        int unreadCount = conversation.unreadCount;
-
-        if (conversation.isGroupChat) {
-          displayName = conversation.groupName ?? 'Group Chat';
-          displayImageUrl = conversation.groupPictureUrl;
-        } else if (authService.currentUser != null &&
-            conversation.participants.isNotEmpty) {
-          try {
-            displayUserForAvatar = conversation.participants.firstWhere(
-              (p) => p.id != authService.currentUser!.id,
-            );
-            displayName = displayUserForAvatar.fullName;
-            displayImageUrl = displayUserForAvatar.profilePictureUrl;
-            isUserOnline = _activeUserIds.contains(displayUserForAvatar.id);
-          } catch (e) {
-            displayName = "Private Chat";
-          }
-        } else {
-          displayName = "Private Chat";
+        if (authService.currentUser == null) {
+          return const SizedBox.shrink();
         }
+        final conversation = _filteredConversations[index];
+        final otherUser = conversation.getOtherParticipant(
+          authService.currentUser!.id,
+        );
+        final displayName =
+            conversation.isGroupChat
+                ? (conversation.groupName ?? 'Group Chat')
+                : (otherUser?.fullName ?? 'Private Chat');
+        final displayImageUrl =
+            conversation.isGroupChat
+                ? conversation.groupPictureUrl
+                : otherUser?.profilePictureUrl;
+        final isUserOnline =
+            !conversation.isGroupChat && _activeUserIds.contains(otherUser?.id);
+        final unreadCount = conversation.unreadCount;
 
         final lastMsg = conversation.lastMessage;
-        String lastMessageText = lastMsg?.content ?? 'Tap to start chatting!';
-        if (lastMsg != null &&
-            lastMsg.sender.id == authService.currentUser?.id) {
-          lastMessageText = "You: $lastMessageText";
+        String lastMessageText = 'Tap to start chatting!';
+        if (lastMsg != null) {
+          if (lastMsg.fileUrl != null && lastMsg.fileUrl!.isNotEmpty) {
+            lastMessageText =
+                lastMsg.fileType!.startsWith('image')
+                    ? '📷 Photo'
+                    : (lastMsg.fileType!.startsWith('audio')
+                        ? '🎤 Voice Message'
+                        : '📎 File');
+          } else {
+            lastMessageText = lastMsg.content;
+          }
+
+          if (lastMsg.sender != null &&
+              lastMsg.sender!.id == authService.currentUser?.id) {
+            lastMessageText = "You: $lastMessageText";
+          }
         }
 
         return ListTile(
@@ -429,8 +490,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             : Colors.grey[500],
                   ),
                 ),
-              if (lastMsg != null && unreadCount > 0) ...[
-                const SizedBox(height: 6),
+              const SizedBox(height: 4),
+              if (unreadCount > 0)
                 CircleAvatar(
                   radius: 10,
                   backgroundColor: Theme.of(context).primaryColor,
@@ -442,9 +503,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                ),
-              ] else
-                const SizedBox(height: 26),
+                )
+              else
+                const SizedBox(height: 20),
             ],
           ),
           onTap: () => _navigateToChatScreen(conversation),
@@ -500,9 +561,40 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _fetchConversations,
-        child: _buildConversationList(),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 8.0),
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Search by name...',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon:
+                    _searchController.text.isNotEmpty
+                        ? IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            _searchController.clear();
+                          },
+                        )
+                        : null,
+                filled: true,
+                fillColor: Theme.of(context).scaffoldBackgroundColor,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(30.0),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: _fetchConversations,
+              child: _buildConversationList(),
+            ),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {

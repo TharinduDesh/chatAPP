@@ -204,6 +204,62 @@ function initializeSocketIO(io) {
       }
     });
 
+    socket.on("reactToMessage", async (data) => {
+      const { conversationId, messageId, emoji } = data;
+      const reactor = await UserSocket.findById(userSockets[socket.id]);
+
+      if (!reactor || !messageId || !emoji) {
+        socket.emit("messageError", { message: "Missing data for reaction." });
+        return;
+      }
+
+      try {
+        const message = await MessageSocket.findById(messageId);
+        if (!message) return;
+
+        // Find if this user has already reacted with this emoji
+        const existingReactionIndex = message.reactions.findIndex((reaction) =>
+          reaction.user.equals(reactor._id)
+        );
+
+        if (existingReactionIndex > -1) {
+          // If user is reacting with the same emoji again, remove their reaction
+          if (message.reactions[existingReactionIndex].emoji === emoji) {
+            message.reactions.splice(existingReactionIndex, 1);
+          } else {
+            // If user is changing their reaction emoji
+            message.reactions[existingReactionIndex].emoji = emoji;
+          }
+        } else {
+          // If user has not reacted before, add new reaction
+          message.reactions.push({
+            emoji: emoji,
+            user: reactor._id,
+            userName: reactor.fullName,
+          });
+        }
+
+        await message.save();
+
+        // Populate the full sender details before broadcasting
+        const updatedMessage = await message.populate(
+          "sender",
+          "fullName email profilePictureUrl"
+        );
+
+        // Broadcast the updated message to everyone in the room
+        io.to(conversationId.toString()).emit(
+          "messageUpdated",
+          updatedMessage.toObject()
+        );
+      } catch (error) {
+        console.error("SOCKET_ERROR: Error reacting to message:", error);
+        socket.emit("messageError", {
+          message: "Error processing your reaction.",
+        });
+      }
+    });
+
     socket.on("typing", (data) => {
       const { conversationId } = data;
       const typingUser = userSockets[socket.id];
@@ -224,12 +280,29 @@ function initializeSocketIO(io) {
       }
     });
 
-    socket.on("disconnect", () => {
+    socket.on("disconnect", async () => {
+      // Make the handler async
       console.log(`SOCKET_INFO: Client disconnected: ${socket.id}`);
       const disconnectedUserId = userSockets[socket.id];
       if (disconnectedUserId) {
         delete activeUsers[disconnectedUserId];
         delete userSockets[socket.id];
+
+        // Update the user's lastSeen timestamp in the database
+        try {
+          await UserSocket.findByIdAndUpdate(disconnectedUserId, {
+            lastSeen: new Date(),
+          });
+          console.log(
+            `SOCKET_INFO: Updated lastSeen for user ${disconnectedUserId}`
+          );
+        } catch (error) {
+          console.error(
+            `SOCKET_ERROR: Failed to update lastSeen for user ${disconnectedUserId}`,
+            error
+          );
+        }
+
         io.emit("activeUsers", Object.keys(activeUsers));
         console.log(
           `SOCKET_INFO: User ${disconnectedUserId} removed from active users.`

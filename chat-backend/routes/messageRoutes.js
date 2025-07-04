@@ -42,15 +42,19 @@ routerMsgRoutes.post(
   }
 );
 
-// @desc    Get all messages for a specific conversation
+// @desc    Get all messages for a specific conversation with pagination
 // @route   GET /api/messages/:conversationId
 // @access  Private
 routerMsgRoutes.get("/:conversationId", protectMsgRoutes, async (req, res) => {
   const { conversationId } = req.params;
   const currentUserId = req.user._id;
 
+  // Get page and limit from query params, with default values
+  const page = parseInt(req.query.page, 10) || 1;
+  const limit = parseInt(req.query.limit, 10) || 30; // Load 30 messages per page
+  const skip = (page - 1) * limit;
+
   try {
-    // Optional: Verify the current user is part of the conversation
     const conversation = await ConversationModelMsgRoutes.findById(
       conversationId
     );
@@ -66,19 +70,17 @@ routerMsgRoutes.get("/:conversationId", protectMsgRoutes, async (req, res) => {
     const messages = await MessageModelMsgRoutes.find({
       conversationId: conversationId,
     })
-      .populate("sender", "fullName email profilePictureUrl") // Populate sender details for each message
-      .sort({ createdAt: 1 }); // Fetch messages in chronological order (older first)
+      .populate("sender", "fullName email profilePictureUrl")
+      // Sort newest first, then skip and limit
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
 
+    // Send back the messages in reverse chronological order (newest first).
     res.json(messages);
   } catch (error) {
-    console.error(
-      `Get Messages for Conversation ${conversationId} Error:`,
-      error
-    );
-    res.status(500).json({
-      message: "Server error fetching messages.",
-      error: error.message,
-    });
+    console.error(`Get Messages Error:`, error);
+    res.status(500).json({ message: "Server error fetching messages." });
   }
 });
 
@@ -159,5 +161,48 @@ routerMsgRoutes.delete("/:messageId", protectMsgRoutes, async (req, res) => {
     res.status(500).json({ message: "Server error deleting message." });
   }
 });
+
+// @desc    Search for messages within a conversation
+// @route   GET /api/messages/:conversationId/search
+// @access  Private
+routerMsgRoutes.get(
+  "/:conversationId/search",
+  protectMsgRoutes,
+  async (req, res) => {
+    const { conversationId } = req.params;
+    const { q: query } = req.query; // q is the search query parameter
+    const currentUserId = req.user._id;
+
+    if (!query) {
+      return res.status(400).json({ message: "A search query is required." });
+    }
+
+    try {
+      // First, verify the user is actually a member of this conversation
+      const conversation = await ConversationModelMsgRoutes.findById(
+        conversationId
+      );
+      if (!conversation || !conversation.participants.includes(currentUserId)) {
+        return res
+          .status(403)
+          .json({ message: "Not authorized to search this conversation." });
+      }
+
+      // Find messages using the text index
+      const messages = await MessageModelMsgRoutes.find({
+        conversationId: conversationId,
+        $text: { $search: query },
+        deletedAt: null, // Exclude deleted messages from search
+      })
+        .sort({ createdAt: -1 }) // Show most recent results first
+        .populate("sender", "fullName email profilePictureUrl");
+
+      res.json(messages);
+    } catch (error) {
+      console.error(`Search Messages Error:`, error);
+      res.status(500).json({ message: "Server error during message search." });
+    }
+  }
+);
 
 module.exports = routerMsgRoutes;

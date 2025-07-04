@@ -14,6 +14,11 @@ class SocketService {
       StreamController<Message>.broadcast();
   Stream<Message> get messageStream => _messageStreamController.stream;
 
+  final StreamController<Message> _messageUpdateStreamController =
+      StreamController<Message>.broadcast();
+  Stream<Message> get messageUpdateStream =>
+      _messageUpdateStreamController.stream;
+
   final StreamController<List<String>> _activeUsersStreamController =
       StreamController<List<String>>.broadcast();
   Stream<List<String>> get activeUsersStream =>
@@ -95,6 +100,16 @@ class SocketService {
       }
     });
 
+    _socket!.on('messageUpdated', (data) {
+      try {
+        if (data is Map<String, dynamic>) {
+          _messageUpdateStreamController.add(Message.fromJson(data));
+        }
+      } catch (e) {
+        print('SocketService: Error parsing messageUpdated: $e');
+      }
+    });
+
     // <<< NEW: Listeners for read receipt events >>>
     _socket!.on('messageDelivered', (data) {
       print("SocketService: Received messageDelivered: $data");
@@ -151,6 +166,16 @@ class SocketService {
       print(
         "SocketService: Emitted markMessagesAsRead for convo: $conversationId",
       );
+    }
+  }
+
+  void reactToMessage(String conversationId, String messageId, String emoji) {
+    if (_socket != null && _socket!.connected) {
+      _socket!.emit('reactToMessage', {
+        'conversationId': conversationId,
+        'messageId': messageId,
+        'emoji': emoji,
+      });
     }
   }
 

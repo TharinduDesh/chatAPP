@@ -32,20 +32,19 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    ThemeData appTheme = ThemeData(
-      primarySwatch: Colors.teal,
-      primaryColor: Colors.teal,
-      primaryColorDark: Colors.teal[700],
-      hintColor: Colors.tealAccent[100], // For less prominent accents
-      colorScheme: ColorScheme.fromSwatch(
-        primarySwatch: Colors.teal,
-        accentColor: Colors.tealAccent[400], // For FABs, active switches
-        brightness: Brightness.light,
-        errorColor: Colors.red[700],
+    const Color primaryBlue = Color(0xFF0E3B7B);
+
+    final ThemeData appTheme = ThemeData(
+      // Use fromSeed to generate a full, harmonious color scheme from your blue color
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: primaryBlue,
+        brightness: Brightness.light, // Keep the light theme
       ),
+      useMaterial3: true,
+      fontFamily: 'Inter',
+
       scaffoldBackgroundColor: Colors.grey[100],
-      fontFamily:
-          'Inter', // Ensure 'Inter' font is in pubspec.yaml and assets/fonts
+
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: Colors.white,
@@ -61,9 +60,10 @@ class MyApp extends StatelessWidget {
           borderRadius: BorderRadius.circular(12.0),
           borderSide: BorderSide(color: Colors.grey[350]!, width: 1.0),
         ),
+        // Use the new primary color for the focused border
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12.0),
-          borderSide: BorderSide(color: Colors.teal, width: 1.8),
+          borderSide: BorderSide(color: primaryBlue, width: 1.8),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12.0),
@@ -80,9 +80,10 @@ class MyApp extends StatelessWidget {
         hintStyle: TextStyle(color: Colors.grey[500]),
         prefixIconColor: Colors.grey[600],
       ),
+
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.teal,
+          backgroundColor: primaryBlue,
           foregroundColor: Colors.white,
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
           textStyle: const TextStyle(
@@ -97,9 +98,10 @@ class MyApp extends StatelessWidget {
           elevation: 2,
         ),
       ),
+
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
-          foregroundColor: Colors.teal,
+          foregroundColor: primaryBlue, // Use the new primary color
           textStyle: const TextStyle(
             fontFamily: 'Inter',
             fontWeight: FontWeight.w600,
@@ -107,18 +109,20 @@ class MyApp extends StatelessWidget {
           ),
         ),
       ),
-      appBarTheme: AppBarTheme(
-        backgroundColor: Colors.teal,
+
+      appBarTheme: const AppBarTheme(
+        backgroundColor: primaryBlue,
         foregroundColor: Colors.white,
         elevation: 1.0,
         centerTitle: true,
-        titleTextStyle: const TextStyle(
+        titleTextStyle: TextStyle(
           fontFamily: 'Inter',
           fontSize: 20,
           fontWeight: FontWeight.w600,
           letterSpacing: 0.2,
         ),
       ),
+
       dialogTheme: DialogTheme(
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16.0),
@@ -126,7 +130,9 @@ class MyApp extends StatelessWidget {
         backgroundColor: Colors.white,
         elevation: 5,
         titleTextStyle: TextStyle(
-          color: Colors.teal[800],
+          color: primaryBlue.withBlue(
+            100,
+          ), // A slightly adjusted blue for titles
           fontSize: 20,
           fontWeight: FontWeight.bold,
           fontFamily: 'Inter',
@@ -138,6 +144,7 @@ class MyApp extends StatelessWidget {
           height: 1.4,
         ),
       ),
+
       cardTheme: CardTheme(
         elevation: 1,
         shape: RoundedRectangleBorder(
@@ -146,21 +153,24 @@ class MyApp extends StatelessWidget {
         ),
         margin: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
       ),
+
       listTileTheme: ListTileThemeData(
-        iconColor: Colors.teal[600],
+        iconColor: primaryBlue.withOpacity(0.9),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.0)),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 16.0,
           vertical: 4.0,
-        ), // Standard padding for list tiles
+        ),
       ),
-      bottomSheetTheme: BottomSheetThemeData(
+
+      bottomSheetTheme: const BottomSheetThemeData(
         backgroundColor: Colors.white,
-        shape: const RoundedRectangleBorder(
+        shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(20.0)),
         ),
         elevation: 5,
       ),
+
       snackBarTheme: SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(

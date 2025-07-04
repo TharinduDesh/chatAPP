@@ -25,6 +25,10 @@ const userSchema = new mongooseUser.Schema({
     type: String,
     default: "", // Default placeholder or empty
   },
+  lastSeen: {
+    type: Date,
+    default: Date.now,
+  },
   createdAt: {
     type: Date,
     default: Date.now,

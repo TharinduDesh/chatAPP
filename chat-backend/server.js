@@ -30,6 +30,7 @@ initializeSocketIO(io);
 // Global Express Middleware
 appServer.use(corsServer()); // Enable Cross-Origin Resource Sharing for HTTP requests
 appServer.use(expressServer.json()); // Parse JSON request bodies
+appServer.set("socketio", io); // to make `io` available in your routes via req.app.get()
 
 // --- MongoDB Connection ---
 const MONGO_URI_SERVER =

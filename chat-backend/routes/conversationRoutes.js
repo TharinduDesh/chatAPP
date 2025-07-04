@@ -177,6 +177,35 @@ routerConvRoutes.post("/one-to-one", protectConvRoutes, async (req, res) => {
   }
 });
 
+// --- Helper function to create and broadcast a system message ---
+async function createAndBroadcastSystemMessage(req, conversationId, content) {
+  const io = req.app.get("socketio");
+
+  const systemMessage = new MessageModelConvRoutes({
+    conversationId: conversationId,
+    content: content,
+    messageType: "system", // Set the type
+    // No sender for system messages
+  });
+
+  await systemMessage.save();
+  const populatedMessage = await systemMessage.populate(
+    "sender",
+    "fullName email profilePictureUrl"
+  );
+
+  // Broadcast this new system message to everyone in the room
+  io.to(conversationId.toString()).emit(
+    "receiveMessage",
+    populatedMessage.toObject()
+  );
+
+  // Also update the conversation's last message
+  await ConversationModelConvRoutes.findByIdAndUpdate(conversationId, {
+    lastMessage: systemMessage._id,
+  });
+}
+
 // @desc    Create a new group chat
 // @route   POST /api/conversations/group
 // @access  Private
@@ -473,6 +502,13 @@ routerConvRoutes.put(
 
       if (!groupDeleted) await conversation.save();
 
+      const leavingMemberName = req.user.fullName;
+      await createAndBroadcastSystemMessage(
+        req,
+        conversationId,
+        `${leavingMemberName} left`
+      );
+
       const finalConversationState = groupDeleted
         ? null
         : await populateConversation(
@@ -558,10 +594,19 @@ routerConvRoutes.put(
 
       conversation.participants.push(userObjectIdToAdd);
       await conversation.save();
+
+      // Create and broadcast the system message
+      const adminName = req.user.fullName;
+      const newMemberName = userToAddExists.fullName;
+      await createAndBroadcastSystemMessage(
+        req,
+        conversationId,
+        `${adminName} added ${newMemberName}`
+      );
+
       const updatedConversation = await populateConversation(conversation);
-      // TODO: Emit 'conversationUpdated'
       res.status(200).json({
-        message: `${userToAddExists.fullName} added successfully.`,
+        message: `${newMemberName} added successfully.`,
         conversation: updatedConversation,
       });
     } catch (error) {
@@ -572,6 +617,8 @@ routerConvRoutes.put(
 
 // @desc    Remove Member from Group
 // @route   PUT /api/conversations/group/:conversationId/remove-member
+// In chat-backend/routes/conversationRoutes.js
+
 routerConvRoutes.put(
   "/group/:conversationId/remove-member",
   protectConvRoutes,
@@ -607,7 +654,6 @@ routerConvRoutes.put(
           .status(400)
           .json({ message: "This is not a group conversation." });
 
-      // <<< MODIFIED: Check if current user is in groupAdmins array >>>
       if (
         !conversation.groupAdmins.some((adminId) =>
           adminId.equals(currentUserId)
@@ -622,29 +668,21 @@ routerConvRoutes.put(
         userIdToRemoveString
       );
 
-      // An admin cannot remove another admin using this route (use demote/transfer admin routes for that)
-      // unless they are removing a non-admin member.
-      const isTargetAdmin = conversation.groupAdmins.some((adminId) =>
-        adminId.equals(userObjectIdToRemove)
+      // --- START OF THE FIX ---
+
+      // 1. Fetch the user document for the member being removed.
+      const memberToRemove = await UserModelConvRoutes.findById(
+        userObjectIdToRemove
       );
-      if (isTargetAdmin && !userObjectIdToRemove.equals(currentUserId)) {
-        // Admin trying to remove another admin
-        return res.status(400).json({
-          message:
-            "Cannot remove another admin using this action. Use 'Demote Admin' or 'Transfer Admin'.",
-        });
+      if (!memberToRemove) {
+        return res
+          .status(404)
+          .json({
+            message: "The user you are trying to remove does not exist.",
+          });
       }
-      // Admin cannot remove themselves using this route if they are an admin.
-      if (
-        isTargetAdmin &&
-        userObjectIdToRemove.equals(currentUserId) &&
-        conversation.groupAdmins.length === 1
-      ) {
-        return res.status(400).json({
-          message:
-            "You are the only admin. To leave, use 'Leave Group'. To remove yourself as admin, first make someone else an admin.",
-        });
-      }
+
+      // --- END OF THE FIX ---
 
       const participantIndex = conversation.participants.findIndex((pId) =>
         pId.equals(userObjectIdToRemove)
@@ -654,25 +692,19 @@ routerConvRoutes.put(
           .status(404)
           .json({ message: "User is not a member of this group." });
 
-      conversation.participants.splice(participantIndex, 1);
-      // Also remove from admins if they were an admin (and not the one performing action, and not last admin)
-      const adminIndexToRemove = conversation.groupAdmins.findIndex((adminId) =>
+      const isTargetAdmin = conversation.groupAdmins.some((adminId) =>
         adminId.equals(userObjectIdToRemove)
       );
-      if (adminIndexToRemove !== -1) {
-        // Only allow removal from admin list if they are not the last admin,
-        // or if the one performing action is removing themselves (which is covered by "Leave Group").
-        // This simple "remove member" shouldn't leave a group admin-less.
-        if (conversation.groupAdmins.length > 1) {
-          conversation.groupAdmins.splice(adminIndexToRemove, 1);
-        } else if (!userObjectIdToRemove.equals(conversation.groupAdmins[0])) {
-          // If target is not the only admin, it's fine. If target IS the only admin, this removal won't proceed due to above checks.
-          // This logic is a bit complex. The main idea is: if you remove a member who HAPPENS to be an admin,
-          // they are also removed from admin list ONLY IF they are not the last admin.
-        }
+      if (isTargetAdmin) {
+        return res
+          .status(400)
+          .json({
+            message: "Cannot remove an admin. Please demote them first.",
+          });
       }
 
-      // If group becomes empty, delete it
+      conversation.participants.splice(participantIndex, 1);
+
       if (conversation.participants.length === 0) {
         await ConversationModelConvRoutes.findByIdAndDelete(conversationId);
         return res.status(200).json({
@@ -682,13 +714,23 @@ routerConvRoutes.put(
       }
 
       await conversation.save();
+
+      // Now this will work because `memberToRemove` is defined
+      const adminName = req.user.fullName;
+      const removedMemberName = memberToRemove.fullName;
+      await createAndBroadcastSystemMessage(
+        req,
+        conversationId,
+        `${adminName} removed ${removedMemberName}`
+      );
+
       const updatedConversation = await populateConversation(conversation);
-      // TODO: Emit 'conversationUpdated'
       res.status(200).json({
         message: "Member removed successfully.",
         conversation: updatedConversation,
       });
     } catch (error) {
+      console.error("Remove Member Error:", error);
       res
         .status(500)
         .json({ message: "Server error removing member from group." });

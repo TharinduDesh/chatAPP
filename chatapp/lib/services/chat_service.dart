@@ -76,12 +76,21 @@ class ChatService {
     }
   }
 
-  Future<List<Message>> getMessages(String conversationId) async {
+  Future<List<Message>> getMessages(
+    String conversationId, {
+    int page = 1,
+    int limit = 30,
+  }) async {
     final token = await _tokenStorageService.getToken();
     if (token == null) throw Exception('Not authenticated: No token found.');
     try {
+      // Add page and limit to the request URI
+      final uri = Uri.parse('$_messagesBaseUrl/$conversationId').replace(
+        queryParameters: {'page': page.toString(), 'limit': limit.toString()},
+      );
+
       final response = await http.get(
-        Uri.parse('$_messagesBaseUrl/$conversationId'),
+        uri,
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json; charset=UTF-8',
@@ -89,10 +98,13 @@ class ChatService {
       );
       if (response.statusCode == 200) {
         List<dynamic> body = jsonDecode(response.body);
+        // The client will receive newest messages first, so we'll reverse it for display
         return body
             .map(
               (dynamic item) => Message.fromJson(item as Map<String, dynamic>),
             )
+            .toList()
+            .reversed
             .toList();
       } else {
         final errorData = jsonDecode(response.body);
@@ -465,6 +477,41 @@ class ChatService {
       return Message.fromJson(jsonDecode(response.body));
     } else {
       throw Exception('Failed to delete message');
+    }
+  }
+
+  Future<List<Message>> searchMessages(
+    String conversationId,
+    String query,
+  ) async {
+    final token = await _tokenStorageService.getToken();
+    if (token == null) throw Exception('Not authenticated: No token found.');
+
+    try {
+      final uri = Uri.parse(
+        '$_messagesBaseUrl/$conversationId/search',
+      ).replace(queryParameters: {'q': query});
+      final response = await http.get(
+        uri,
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json; charset=UTF-8',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        List<dynamic> body = jsonDecode(response.body);
+        return body
+            .map(
+              (dynamic item) => Message.fromJson(item as Map<String, dynamic>),
+            )
+            .toList();
+      } else {
+        final errorData = jsonDecode(response.body);
+        throw Exception(errorData['message'] ?? 'Failed to search messages');
+      }
+    } catch (e) {
+      throw Exception('Failed to search messages: ${e.toString()}');
     }
   }
 }

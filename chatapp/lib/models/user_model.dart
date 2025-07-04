@@ -5,6 +5,7 @@ class User {
   final String email;
   final String? profilePictureUrl; // Nullable as it might not always be there
   final DateTime? createdAt;
+  final DateTime? lastSeen;
 
   User({
     required this.id,
@@ -12,6 +13,7 @@ class User {
     required this.email,
     this.profilePictureUrl,
     this.createdAt,
+    this.lastSeen,
   });
 
   factory User.fromJson(Map<String, dynamic> json) {
@@ -23,6 +25,10 @@ class User {
       createdAt:
           json['createdAt'] != null
               ? DateTime.tryParse(json['createdAt'] as String)
+              : null,
+      lastSeen:
+          json['lastSeen'] != null
+              ? DateTime.tryParse(json['lastSeen'] as String)?.toLocal()
               : null,
     );
   }

@@ -72,6 +72,10 @@ const chatFileFilter = (req, file, cb) => {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "video/mp4",
     "video/quicktime",
+    "audio/mpeg", // .mp3
+    "audio/mp4", // .m4a
+    "audio/aac",
+    "audio/wav",
   ];
   if (allowedMimes.includes(file.mimetype)) {
     cb(null, true);
@@ -91,13 +95,11 @@ const uploadChatFile = multer({
 const handleMulterError = (err, req, res, next) => {
   if (err instanceof multer.MulterError) {
     if (err.code === "LIMIT_FILE_SIZE") {
-      return res
-        .status(400)
-        .json({
-          message: `File too large. Maximum size is ${
-            err.limit / 1024 / 1024
-          }MB.`,
-        });
+      return res.status(400).json({
+        message: `File too large. Maximum size is ${
+          err.limit / 1024 / 1024
+        }MB.`,
+      });
     }
     return res.status(400).json({ message: err.message });
   } else if (err) {

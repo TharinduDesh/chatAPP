@@ -46,6 +46,12 @@ dependencies:
   #For PDF View
   syncfusion_flutter_pdfviewer: ^29.2.10
 
+  #For audio messages
+  record: ^6.0.0
+  just_audio: ^0.10.4
+
+  path_provider: ^2.1.5
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
