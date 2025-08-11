@@ -1,16 +1,20 @@
 // lib/screens/home_screen.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:shimmer/shimmer.dart';
 import '../services/services_locator.dart';
 import '../models/conversation_model.dart';
 import '../models/user_model.dart';
+import '../models/message_model.dart';
 import 'login_screen.dart';
 import 'profile_screen.dart';
 import 'user_list_screen.dart';
 import 'chat_screen.dart';
 import '../widgets/user_avatar.dart';
-import 'package:intl/intl.dart';
+import '../services/crypto_service.dart';
+import '../services/cache_service.dart';
+import '../services/socket_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -26,6 +30,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _errorMessage;
 
   final TextEditingController _searchController = TextEditingController();
+  final CryptoService _cryptoService = CryptoService();
+  final CacheService _cacheService = CacheService();
 
   StreamSubscription? _conversationUpdateSubscription;
   StreamSubscription? _newMessageSubscription;
@@ -35,9 +41,50 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _initializeScreen();
-    _searchController.addListener(_filterConversations);
 
+    // ==================  START: UPDATED LOGIN FLOW  ==================
+    // 1. Re-initialize the service to ensure all streams are fresh.
+    socketService.init();
+    // 2. Now, tell the service to connect.
+    socketService.connect();
+    // ===================  END: UPDATED LOGIN FLOW  ===================
+
+    _loadInitialData();
+    _searchController.addListener(_filterConversations);
+    _subscribeToSocketEvents();
+  }
+
+  @override
+  void dispose() {
+    _conversationUpdateSubscription?.cancel();
+    _newMessageSubscription?.cancel();
+    _activeUsersSubscription?.cancel();
+    _searchController.removeListener(_filterConversations);
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadInitialData() async {
+    setState(() {
+      _isLoadingConversations = true;
+    });
+
+    final cachedConversations = _cacheService.getConversations();
+    if (cachedConversations.isNotEmpty) {
+      final decryptedCachedConvos = await _decryptConversationList(
+        cachedConversations,
+      );
+      setState(() {
+        _conversations = decryptedCachedConvos;
+        _filteredConversations = decryptedCachedConvos;
+        _isLoadingConversations = false;
+      });
+    }
+
+    await _fetchConversationsFromServer();
+  }
+
+  void _subscribeToSocketEvents() {
     _conversationUpdateSubscription = socketService.conversationUpdateStream
         .listen((updatedConv) {
           if (mounted) {
@@ -51,7 +98,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _conversations.sort(
                   (a, b) => b.updatedAt.compareTo(a.updatedAt),
                 );
-                _filterConversations(); // Re-apply filter
+                _filterConversations();
               });
             } else {
               setState(() {
@@ -59,46 +106,68 @@ class _HomeScreenState extends State<HomeScreen> {
                 _conversations.sort(
                   (a, b) => b.updatedAt.compareTo(a.updatedAt),
                 );
-                _filterConversations(); // Re-apply filter
+                _filterConversations();
               });
             }
           }
         });
 
-    _newMessageSubscription = socketService.messageStream.listen((newMessage) {
+    _newMessageSubscription = socketService.messageStream.listen((
+      message,
+    ) async {
       if (mounted) {
         final int conversationIndex = _conversations.indexWhere(
-          (c) => c.id == newMessage.conversationId,
+          (c) => c.id == message.conversationId,
         );
         if (conversationIndex != -1) {
+          Message messageToShow = message;
+          Conversation conversation = _conversations[conversationIndex];
+
+          if (message.isEncrypted) {
+            await _cryptoService.ready;
+            String? decryptedContent;
+            if (conversation.isGroupChat) {
+              decryptedContent = await _cryptoService.decryptGroupMessage(
+                conversation.id,
+                message.content,
+              );
+            } else {
+              final otherUser = conversation.getOtherParticipant(
+                authService.currentUser!.id,
+              );
+              if (otherUser != null) {
+                decryptedContent = await _cryptoService.decrypt1on1Message(
+                  otherUser.id,
+                  message.content,
+                );
+              }
+            }
+            messageToShow = message.copyWith(
+              content: decryptedContent ?? '[Encrypted Message]',
+            );
+          }
+
           setState(() {
             Conversation oldConv = _conversations[conversationIndex];
             bool shouldIncrementUnread = false;
-            // Only check the sender if it's not a system message.
-            if (newMessage.sender != null) {
+            if (messageToShow.sender != null) {
               shouldIncrementUnread =
-                  newMessage.sender!.id != authService.currentUser?.id;
+                  messageToShow.sender!.id != authService.currentUser?.id;
             }
-            _conversations[conversationIndex] = Conversation(
-              id: oldConv.id,
-              participants: oldConv.participants,
-              isGroupChat: oldConv.isGroupChat,
-              groupName: oldConv.groupName,
-              groupAdmins: oldConv.groupAdmins,
-              groupPictureUrl: oldConv.groupPictureUrl,
-              lastMessage: newMessage,
-              createdAt: oldConv.createdAt,
-              updatedAt: newMessage.createdAt,
+            _conversations[conversationIndex] = oldConv.copyWith(
+              lastMessage: messageToShow,
+              updatedAt: messageToShow.createdAt,
               unreadCount:
                   shouldIncrementUnread
                       ? (oldConv.unreadCount) + 1
                       : oldConv.unreadCount,
             );
+
             _conversations.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-            _filterConversations(); // Re-apply filter
+            _filterConversations();
           });
         } else {
-          _fetchConversations();
+          _fetchConversationsFromServer();
         }
       }
     });
@@ -112,16 +181,6 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
     });
-  }
-
-  @override
-  void dispose() {
-    _conversationUpdateSubscription?.cancel();
-    _newMessageSubscription?.cancel();
-    _activeUsersSubscription?.cancel();
-    _searchController.removeListener(_filterConversations);
-    _searchController.dispose();
-    super.dispose();
   }
 
   void _filterConversations() {
@@ -143,50 +202,36 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  Future<void> _initializeScreen() async {
-    if (authService.currentUser != null) {
-      if (socketService.socket == null || !socketService.socket!.connected) {
-        await initializeServicesOnLogin();
-      }
-      _fetchConversations();
-    } else {
-      if (mounted) {
-        setState(() {
-          _isLoadingConversations = false;
-          _errorMessage = "User not authenticated. Please login.";
-        });
-      }
-    }
-  }
-
-  Future<void> _fetchConversations() async {
+  Future<void> _fetchConversationsFromServer() async {
     if (authService.currentUser == null) {
-      if (mounted) {
+      if (mounted && _conversations.isEmpty) {
         setState(() {
-          _isLoadingConversations = false;
           _errorMessage = "Not logged in.";
+          _isLoadingConversations = false;
         });
       }
       return;
     }
-    if (!mounted) return;
-    setState(() {
-      _isLoadingConversations = true;
-      _errorMessage = null;
-    });
+
     try {
-      await Future.delayed(const Duration(milliseconds: 300));
-      final conversations = await chatService.getConversations();
+      final conversationsFromServer = await chatService.getConversations();
+      final decryptedConversations = await _decryptConversationList(
+        conversationsFromServer,
+      );
+
+      await _cacheService.saveConversations(decryptedConversations);
+
       if (mounted) {
         setState(() {
-          _conversations = conversations;
-          _filteredConversations = conversations;
+          _conversations = decryptedConversations;
+          _filteredConversations = decryptedConversations;
           _isLoadingConversations = false;
-          _filterConversations(); // Apply filter on initial fetch
+          _errorMessage = null;
+          _filterConversations();
         });
       }
     } catch (e) {
-      if (mounted) {
+      if (mounted && _conversations.isEmpty) {
         setState(() {
           _errorMessage = e.toString().replaceFirst("Exception: ", "");
           _isLoadingConversations = false;
@@ -195,9 +240,55 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // NOTE: The "_handleRefresh" method has been removed as it's no longer needed.
+
+  Future<List<Conversation>> _decryptConversationList(
+    List<Conversation> convos,
+  ) async {
+    await _cryptoService.ready;
+    final currentUserId = authService.currentUser!.id;
+
+    return Future.wait(
+      convos.map((convo) async {
+        final lastMsg = convo.lastMessage;
+
+        if (lastMsg != null && lastMsg.isEncrypted) {
+          String? decryptedContent;
+
+          if (convo.isGroupChat) {
+            decryptedContent = await _cryptoService.decryptGroupMessage(
+              convo.id,
+              lastMsg.content,
+            );
+          } else {
+            final otherUser = convo.getOtherParticipant(currentUserId);
+            if (otherUser != null) {
+              decryptedContent = await _cryptoService.decrypt1on1Message(
+                otherUser.id,
+                lastMsg.content,
+              );
+            }
+          }
+
+          if (decryptedContent != null) {
+            final decryptedMessage = lastMsg.copyWith(
+              content: decryptedContent,
+            );
+            return convo.copyWith(lastMessage: decryptedMessage);
+          }
+        }
+        return convo;
+      }).toList(),
+    );
+  }
+
+  // ==================  START: UPDATED LOGOUT FLOW  ==================
   Future<void> _logoutUser() async {
+    // 1. Completely dispose of the service state before logging out.
+    socketService.dispose();
+
+    // 2. Continue with the original logout process.
     await authService.logout();
-    disconnectServicesOnLogout();
     if (mounted) {
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (context) => const LoginScreen()),
@@ -205,6 +296,7 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
   }
+  // ===================  END: UPDATED LOGOUT FLOW  ===================
 
   void _navigateToChatScreen(Conversation conversation) {
     if (mounted && conversation.unreadCount > 0) {
@@ -239,7 +331,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         )
         .then((_) {
-          _fetchConversations();
+          _fetchConversationsFromServer();
         });
   }
 
@@ -362,8 +454,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildConversationList() {
-    if (_isLoadingConversations) return _buildShimmerLoading();
-    if (_errorMessage != null) {
+    if (_isLoadingConversations && _conversations.isEmpty) {
+      return _buildShimmerLoading();
+    }
+    if (_errorMessage != null && _conversations.isEmpty) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(16.0),
@@ -380,7 +474,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 16),
               ElevatedButton(
-                onPressed: _fetchConversations,
+                onPressed: _fetchConversationsFromServer,
                 child: const Text("Retry"),
               ),
             ],
@@ -514,6 +608,37 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildConnectionStatusIndicator() {
+    return StreamBuilder<SocketStatus>(
+      stream: socketService.connectionStatusStream,
+      initialData: socketService.lastStatus,
+      builder: (context, snapshot) {
+        if (snapshot.data == SocketStatus.online) {
+          return const SizedBox.shrink();
+        }
+
+        return Material(
+          child: Container(
+            width: double.infinity,
+            color: Colors.grey[600]!,
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.wifi_off, size: 14, color: Colors.white),
+                SizedBox(width: 8),
+                Text(
+                  'Offline. Check your connection.',
+                  style: TextStyle(color: Colors.white, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -563,6 +688,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Column(
         children: [
+          _buildConnectionStatusIndicator(),
           Padding(
             padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 8.0),
             child: TextField(
@@ -590,7 +716,8 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           Expanded(
             child: RefreshIndicator(
-              onRefresh: _fetchConversations,
+              // NOTE: Reverted to the original function.
+              onRefresh: _fetchConversationsFromServer,
               child: _buildConversationList(),
             ),
           ),

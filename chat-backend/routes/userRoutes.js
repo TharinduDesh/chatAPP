@@ -1,7 +1,7 @@
 // Purpose: Handles routes related to user profile, including avatar upload.
 const expressUserRoutes = require("express");
 const routerUserRoutes = expressUserRoutes.Router();
-const { protect: protectUserRoutes } = require("../middleware/authMiddleware");
+const protect = require("../middleware/authMiddleware");
 const {
   upload: uploadMiddleware,
   handleMulterError: handleMulterErrorMiddleware,
@@ -13,7 +13,7 @@ const fs = require("fs"); // For deleting old avatars
 // @desc    Get all users (excluding current user, for chat list)
 // @route   GET /api/users
 // @access  Private
-routerUserRoutes.get("/", protectUserRoutes, async (req, res) => {
+routerUserRoutes.get("/", protect, async (req, res) => {
   try {
     const users = await UserModelUserRoutes.find({ _id: { $ne: req.user._id } }) // $ne selects documents where the value of the field is not equal to the specified value.
       .select("-password") // Exclude password
@@ -30,7 +30,7 @@ routerUserRoutes.get("/", protectUserRoutes, async (req, res) => {
 // @desc    Get current user's profile
 // @route   GET /api/users/me
 // @access  Private
-routerUserRoutes.get("/me", protectUserRoutes, async (req, res) => {
+routerUserRoutes.get("/me", protect, async (req, res) => {
   try {
     if (req.user) {
       res.json(req.user);
@@ -48,7 +48,7 @@ routerUserRoutes.get("/me", protectUserRoutes, async (req, res) => {
 // @desc    Update current user's profile (fullName, email)
 // @route   PUT /api/users/me
 // @access  Private
-routerUserRoutes.put("/me", protectUserRoutes, async (req, res) => {
+routerUserRoutes.put("/me", protect, async (req, res) => {
   const { fullName, email } = req.body;
   const userId = req.user._id;
 
@@ -94,12 +94,10 @@ routerUserRoutes.put("/me", protectUserRoutes, async (req, res) => {
         .status(400)
         .json({ message: "This email address is already registered." });
     }
-    res
-      .status(500)
-      .json({
-        message: "Server Error updating profile.",
-        error: error.message,
-      });
+    res.status(500).json({
+      message: "Server Error updating profile.",
+      error: error.message,
+    });
   }
 });
 
@@ -108,7 +106,7 @@ routerUserRoutes.put("/me", protectUserRoutes, async (req, res) => {
 // @access  Private
 routerUserRoutes.post(
   "/me/avatar",
-  protectUserRoutes, // Ensure user is authenticated
+  protect, // Ensure user is authenticated
   uploadMiddleware.single("avatar"), // 'avatar' is the field name in the form-data
   handleMulterErrorMiddleware, // Use the custom error handler for multer
   async (req, res) => {
@@ -178,12 +176,10 @@ routerUserRoutes.post(
         return res.status(400).json({ message: error.message });
       }
       // Generic server error
-      res
-        .status(500)
-        .json({
-          message: "Server error during avatar upload.",
-          error: error.message,
-        });
+      res.status(500).json({
+        message: "Server error during avatar upload.",
+        error: error.message,
+      });
     }
   }
 );

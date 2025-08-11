@@ -1,7 +1,7 @@
 // Purpose: API endpoints for fetching messages and uploading message-related content.
 const expressMsgRoutes = require("express");
 const routerMsgRoutes = expressMsgRoutes.Router();
-const { protect: protectMsgRoutes } = require("../middleware/authMiddleware");
+const protect = require("../middleware/authMiddleware");
 const MessageModelMsgRoutes = require("../models/Message");
 const ConversationModelMsgRoutes = require("../models/Conversation"); // To verify user is part of convo
 
@@ -16,7 +16,7 @@ const {
 // @access  Private
 routerMsgRoutes.post(
   "/upload-file",
-  protectMsgRoutes,
+  protect,
   uploadChatFile.single("chatfile"), // "chatfile" is the field name the client will use
   handleMulterError,
   async (req, res) => {
@@ -45,7 +45,7 @@ routerMsgRoutes.post(
 // @desc    Get all messages for a specific conversation with pagination
 // @route   GET /api/messages/:conversationId
 // @access  Private
-routerMsgRoutes.get("/:conversationId", protectMsgRoutes, async (req, res) => {
+routerMsgRoutes.get("/:conversationId", protect, async (req, res) => {
   const { conversationId } = req.params;
   const currentUserId = req.user._id;
 
@@ -87,7 +87,7 @@ routerMsgRoutes.get("/:conversationId", protectMsgRoutes, async (req, res) => {
 // @desc    Edit a message
 // @route   PUT /api/messages/:messageId/edit
 // @access  Private
-routerMsgRoutes.put("/:messageId/edit", protectMsgRoutes, async (req, res) => {
+routerMsgRoutes.put("/:messageId/edit", protect, async (req, res) => {
   const { messageId } = req.params;
   const { content } = req.body;
   const currentUserId = req.user._id;
@@ -125,7 +125,7 @@ routerMsgRoutes.put("/:messageId/edit", protectMsgRoutes, async (req, res) => {
 // @desc    Delete a message (for everyone)
 // @route   DELETE /api/messages/:messageId
 // @access  Private
-routerMsgRoutes.delete("/:messageId", protectMsgRoutes, async (req, res) => {
+routerMsgRoutes.delete("/:messageId", protect, async (req, res) => {
   const { messageId } = req.params;
   const currentUserId = req.user._id;
 
@@ -165,44 +165,40 @@ routerMsgRoutes.delete("/:messageId", protectMsgRoutes, async (req, res) => {
 // @desc    Search for messages within a conversation
 // @route   GET /api/messages/:conversationId/search
 // @access  Private
-routerMsgRoutes.get(
-  "/:conversationId/search",
-  protectMsgRoutes,
-  async (req, res) => {
-    const { conversationId } = req.params;
-    const { q: query } = req.query; // q is the search query parameter
-    const currentUserId = req.user._id;
+routerMsgRoutes.get("/:conversationId/search", protect, async (req, res) => {
+  const { conversationId } = req.params;
+  const { q: query } = req.query; // q is the search query parameter
+  const currentUserId = req.user._id;
 
-    if (!query) {
-      return res.status(400).json({ message: "A search query is required." });
-    }
-
-    try {
-      // First, verify the user is actually a member of this conversation
-      const conversation = await ConversationModelMsgRoutes.findById(
-        conversationId
-      );
-      if (!conversation || !conversation.participants.includes(currentUserId)) {
-        return res
-          .status(403)
-          .json({ message: "Not authorized to search this conversation." });
-      }
-
-      // Find messages using the text index
-      const messages = await MessageModelMsgRoutes.find({
-        conversationId: conversationId,
-        $text: { $search: query },
-        deletedAt: null, // Exclude deleted messages from search
-      })
-        .sort({ createdAt: -1 }) // Show most recent results first
-        .populate("sender", "fullName email profilePictureUrl");
-
-      res.json(messages);
-    } catch (error) {
-      console.error(`Search Messages Error:`, error);
-      res.status(500).json({ message: "Server error during message search." });
-    }
+  if (!query) {
+    return res.status(400).json({ message: "A search query is required." });
   }
-);
+
+  try {
+    // First, verify the user is actually a member of this conversation
+    const conversation = await ConversationModelMsgRoutes.findById(
+      conversationId
+    );
+    if (!conversation || !conversation.participants.includes(currentUserId)) {
+      return res
+        .status(403)
+        .json({ message: "Not authorized to search this conversation." });
+    }
+
+    // Find messages using the text index
+    const messages = await MessageModelMsgRoutes.find({
+      conversationId: conversationId,
+      $text: { $search: query },
+      deletedAt: null, // Exclude deleted messages from search
+    })
+      .sort({ createdAt: -1 }) // Show most recent results first
+      .populate("sender", "fullName email profilePictureUrl");
+
+    res.json(messages);
+  } catch (error) {
+    console.error(`Search Messages Error:`, error);
+    res.status(500).json({ message: "Server error during message search." });
+  }
+});
 
 module.exports = routerMsgRoutes;

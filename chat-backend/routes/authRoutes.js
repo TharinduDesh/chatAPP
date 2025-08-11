@@ -4,7 +4,7 @@ const routerAuthRoutes = expressAuthRoutes.Router(); // Renamed
 const bcryptAuthRoutes = require("bcryptjs"); // Renamed
 const jwtAuthRoutes = require("jsonwebtoken"); // Renamed
 const UserAuthRoutes = require("../models/User"); // Path to User model
-const JWT_SECRET_AUTH_ROUTES = process.env.JWT_SECRET || "yourSuperSecretKey";
+const JWT_SECRET_AUTH_ROUTES = process.env.JWT_SECRET;
 
 // @desc    Register a new user
 // @route   POST /api/auth/signup
@@ -82,7 +82,7 @@ routerAuthRoutes.post("/signup", async (req, res) => {
 // @access  Public
 routerAuthRoutes.post("/login", async (req, res) => {
   try {
-    const { email, password: passwordRequest } = req.body; // Renamed 'password' to avoid conflict
+    const { email, password: passwordRequest } = req.body;
 
     if (!email || !passwordRequest) {
       return res
@@ -90,7 +90,6 @@ routerAuthRoutes.post("/login", async (req, res) => {
         .json({ message: "Please provide email and password." });
     }
 
-    // Find user by email
     const user = await UserAuthRoutes.findOne({ email });
     if (!user) {
       return res
@@ -98,7 +97,43 @@ routerAuthRoutes.post("/login", async (req, res) => {
         .json({ message: "Invalid credentials. User not found." });
     }
 
-    // Compare password (using method from User model)
+    // *Check if the account is deactivated **
+    if (user.deletedAt) {
+      return res
+        .status(403)
+        .json({
+          message:
+            "This account has been deactivated and is scheduled for deletion.",
+        });
+    }
+
+    // BAN CHECK LOGIC **
+    if (user.isBanned) {
+      const now = new Date();
+      // Check if the ban has a specific expiry date and if it has passed
+      if (
+        user.banDetails &&
+        user.banDetails.expiresAt &&
+        user.banDetails.expiresAt < now
+      ) {
+        // Ban has expired, so we unban the user automatically
+        user.isBanned = false;
+        user.banDetails = undefined;
+        await user.save();
+      } else {
+        // User is actively banned
+        let banMessage = `This account has been banned. Reason: ${
+          user.banDetails.reason || "Not specified"
+        }.`;
+        if (user.banDetails && user.banDetails.expiresAt) {
+          banMessage += ` The ban will be lifted on ${new Date(
+            user.banDetails.expiresAt
+          ).toLocaleDateString()}.`;
+        }
+        return res.status(403).json({ message: banMessage }); // 403 Forbidden
+      }
+    }
+
     const isMatch = await user.comparePassword(passwordRequest);
     if (!isMatch) {
       return res
@@ -106,13 +141,12 @@ routerAuthRoutes.post("/login", async (req, res) => {
         .json({ message: "Invalid credentials. Password incorrect." });
     }
 
-    // User matched, create JWT
+    // ... (rest of the login logic remains the same: generate token and send response)
     const token = jwtAuthRoutes.sign(
       { userId: user._id, email: user.email },
       JWT_SECRET_AUTH_ROUTES,
       { expiresIn: "7d" }
     );
-
     const userResponse = {
       _id: user._id,
       fullName: user.fullName,
@@ -120,12 +154,9 @@ routerAuthRoutes.post("/login", async (req, res) => {
       profilePictureUrl: user.profilePictureUrl,
       createdAt: user.createdAt,
     };
-
-    res.status(200).json({
-      message: "Logged in successfully!",
-      token,
-      user: userResponse,
-    });
+    res
+      .status(200)
+      .json({ message: "Logged in successfully!", token, user: userResponse });
   } catch (error) {
     console.error("Login Error:", error.message);
     res

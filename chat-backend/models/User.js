@@ -33,6 +33,28 @@ const userSchema = new mongooseUser.Schema({
     type: Date,
     default: Date.now,
   },
+  createdBy: {
+    type: mongooseUser.Schema.Types.ObjectId,
+    ref: "Admin", // Reference to the Admin model
+  },
+  deletedAt: {
+    type: Date,
+  },
+  deletedBy: {
+    type: mongooseUser.Schema.Types.ObjectId,
+    ref: "Admin", // Reference to the Admin model
+  },
+  isBanned: {
+    type: Boolean,
+    default: false,
+  },
+  banDetails: {
+    reason: String,
+    bannedAt: Date,
+    expiresAt: Date, // Will be null for a permanent ban
+    bannedBy: { type: mongooseUser.Schema.Types.ObjectId, ref: "Admin" },
+  },
+  e2eePublicKey: { type: String },
 });
 
 // Pre-save hook to hash password before saving

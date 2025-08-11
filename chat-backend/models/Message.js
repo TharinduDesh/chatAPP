@@ -35,6 +35,10 @@ const messageSchema = new SchemaMsg(
       enum: ["text", "image", "audio", "video", "system"],
       default: "text",
     },
+    isEncrypted: {
+      type: Boolean,
+      default: false,
+    },
     reactions: [reactionSchema],
     // Fields for file sharing
     fileUrl: {

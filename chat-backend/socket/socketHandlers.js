@@ -1,11 +1,10 @@
 // FILE: socket/socketHandlers.js
-// Purpose: Manages Socket.IO event handling, now including logic for read receipts.
+// Purpose: Manages Socket.IO event handling, including E2EE flags and group key sharing.
 const UserSocket = require("../models/User");
 const ConversationSocket = require("../models/Conversation");
 const MessageSocket = require("../models/Message");
 
 // In-memory store for active users { userId: socketId }
-// For a multi-server setup, you'd use Redis or another shared store.
 let activeUsers = {}; // { userId: socketId }
 let userSockets = {}; // { socketId: userId }
 
@@ -49,13 +48,12 @@ function initializeSocketIO(io) {
       );
     });
 
-    // <<< MODIFIED: sendMessage to handle 'delivered' status >>>
     socket.on("sendMessage", async (data) => {
-      // <<< MODIFIED: Destructure new file-related fields >>>
       const {
         conversationId,
         senderId,
         content,
+        isEncrypted,
         fileUrl,
         fileType,
         fileName,
@@ -64,10 +62,9 @@ function initializeSocketIO(io) {
         replySenderName,
       } = data;
       console.log(
-        `SOCKET_INFO: Message received: from ${senderId} in convo ${conversationId}`
+        `SOCKET_INFO: Message received: from ${senderId} in convo ${conversationId}. Encrypted: ${isEncrypted}`
       );
 
-      // A message must have content OR a file
       if (!conversationId || !senderId || (!content && !fileUrl)) {
         socket.emit("messageError", {
           message: "Missing data for sending message.",
@@ -76,11 +73,11 @@ function initializeSocketIO(io) {
       }
 
       try {
-        // 1. Save the message to the database
         let newMessage = new MessageSocket({
           conversationId,
           sender: senderId,
           content,
+          isEncrypted: isEncrypted || false,
           fileUrl: fileUrl || "",
           fileType: fileType || "",
           fileName: fileName || "",
@@ -91,28 +88,24 @@ function initializeSocketIO(io) {
         });
         await newMessage.save();
 
-        // 2. Update the lastMessage in the conversation
         const conversation = await ConversationSocket.findByIdAndUpdate(
           conversationId,
           { lastMessage: newMessage._id },
           { new: true }
-        ).populate("participants"); // Populate participants to find recipients
+        ).populate("participants");
 
         if (!conversation) {
           socket.emit("messageError", { message: "Conversation not found." });
           return;
         }
 
-        // 3. Populate sender details for the message to be broadcast
         newMessage = await newMessage.populate(
           "sender",
           "fullName email profilePictureUrl"
         );
 
-        // 4. Broadcast the new message to all clients in that conversation room
         io.to(conversationId).emit("receiveMessage", newMessage.toObject());
 
-        // 5. Handle 'delivered' status for one-to-one chats
         if (
           !conversation.isGroupChat &&
           conversation.participants.length === 2
@@ -123,12 +116,8 @@ function initializeSocketIO(io) {
           if (recipient) {
             const recipientSocketId = activeUsers[recipient._id.toString()];
             if (recipientSocketId) {
-              // If the recipient is online
-              // Update the message status to 'delivered' in the DB
               newMessage.status = "delivered";
               await newMessage.save();
-
-              // Notify the sender that the message was delivered
               const senderSocketId = activeUsers[senderId];
               if (senderSocketId) {
                 io.to(senderSocketId).emit("messageDelivered", {
@@ -152,10 +141,42 @@ function initializeSocketIO(io) {
       }
     });
 
-    // <<< NEW: Listener for when a user reads messages >>>
+    // --- NEW: Event handler for sharing group keys ---
+    socket.on("shareGroupKey", (data) => {
+      const { conversationId, senderId, recipientId, encryptedKey } = data;
+      console.log(
+        `SOCKET_INFO: Received group key share from ${senderId} for ${recipientId} in convo ${conversationId}`
+      );
+
+      if (!recipientId || !encryptedKey || !conversationId || !senderId) {
+        console.error("SOCKET_ERROR: Invalid data for shareGroupKey event.");
+        return;
+      }
+
+      // Find the recipient's socket ID from the active users list
+      const recipientSocketId = activeUsers[recipientId];
+
+      if (recipientSocketId) {
+        // The recipient is online, send the key directly to their socket
+        io.to(recipientSocketId).emit("receiveGroupKey", {
+          conversationId,
+          senderId,
+          encryptedKey,
+        });
+        console.log(
+          `SOCKET_INFO: Relayed group key to recipient ${recipientId}`
+        );
+      } else {
+        console.log(
+          `SOCKET_INFO: Recipient ${recipientId} is offline. Cannot share group key.`
+        );
+        // In a more advanced setup, you might handle offline key distribution here
+      }
+    });
+
     socket.on("markMessagesAsRead", async (data) => {
       const { conversationId } = data;
-      const readerId = userSockets[socket.id]; // The user who is reading
+      const readerId = userSockets[socket.id];
 
       if (!conversationId || !readerId) {
         console.error("SOCKET_ERROR: markMessagesAsRead event missing data.");
@@ -166,16 +187,15 @@ function initializeSocketIO(io) {
         const conversation = await ConversationSocket.findById(conversationId);
         if (!conversation) return;
 
-        // Find all messages in this convo not sent by the reader, and update their status to 'read'
         const result = await MessageSocket.updateMany(
           {
             conversationId: conversationId,
-            sender: { $ne: readerId }, // Not sent by me
-            status: { $ne: "read" }, // Not already read
+            sender: { $ne: readerId },
+            status: { $ne: "read" },
           },
           {
             $set: { status: "read" },
-            $addToSet: { readBy: readerId }, // Also update readBy for unread counts
+            $addToSet: { readBy: readerId },
           }
         );
 
@@ -183,16 +203,13 @@ function initializeSocketIO(io) {
           `SOCKET_INFO: User ${readerId} marked messages as read in ${conversationId}. Updated: ${result.modifiedCount}`
         );
 
-        // If any messages were updated, notify the original sender that their messages were read
         if (result.modifiedCount > 0) {
-          // Find the other user in the 1-to-1 chat
           const sender = conversation.participants.find(
             (p) => p._id.toString() !== readerId
           );
           if (sender) {
             const senderSocketId = activeUsers[sender._id.toString()];
             if (senderSocketId) {
-              // Notify the sender that all their messages in this chat have been read
               io.to(senderSocketId).emit("messagesRead", {
                 conversationId: conversationId,
               });
@@ -217,21 +234,17 @@ function initializeSocketIO(io) {
         const message = await MessageSocket.findById(messageId);
         if (!message) return;
 
-        // Find if this user has already reacted with this emoji
         const existingReactionIndex = message.reactions.findIndex((reaction) =>
           reaction.user.equals(reactor._id)
         );
 
         if (existingReactionIndex > -1) {
-          // If user is reacting with the same emoji again, remove their reaction
           if (message.reactions[existingReactionIndex].emoji === emoji) {
             message.reactions.splice(existingReactionIndex, 1);
           } else {
-            // If user is changing their reaction emoji
             message.reactions[existingReactionIndex].emoji = emoji;
           }
         } else {
-          // If user has not reacted before, add new reaction
           message.reactions.push({
             emoji: emoji,
             user: reactor._id,
@@ -240,14 +253,11 @@ function initializeSocketIO(io) {
         }
 
         await message.save();
-
-        // Populate the full sender details before broadcasting
         const updatedMessage = await message.populate(
           "sender",
           "fullName email profilePictureUrl"
         );
 
-        // Broadcast the updated message to everyone in the room
         io.to(conversationId.toString()).emit(
           "messageUpdated",
           updatedMessage.toObject()
@@ -281,14 +291,12 @@ function initializeSocketIO(io) {
     });
 
     socket.on("disconnect", async () => {
-      // Make the handler async
       console.log(`SOCKET_INFO: Client disconnected: ${socket.id}`);
       const disconnectedUserId = userSockets[socket.id];
       if (disconnectedUserId) {
         delete activeUsers[disconnectedUserId];
         delete userSockets[socket.id];
 
-        // Update the user's lastSeen timestamp in the database
         try {
           await UserSocket.findByIdAndUpdate(disconnectedUserId, {
             lastSeen: new Date(),

@@ -1,0 +1,11 @@
+{
+  "name": "newchatapp-root",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "npm start --prefix chat-backend",
+    "heroku-postbuild": "npm install --prefix chat-backend"
+  },
+  "cacheDirectories": [
+    "chat-backend/node_modules"
+  ]
+}

@@ -1,8 +1,7 @@
 // Purpose: Middleware to protect routes by verifying JWT.
-const jwtAuthMiddleware = require("jsonwebtoken"); // Renamed
-const UserModelAuthMiddleware = require("../models/User"); // Path to User model
-const JWT_SECRET_AUTH_MIDDLEWARE =
-  process.env.JWT_SECRET || "yourSuperSecretKey";
+const jwtAuthMiddleware = require("jsonwebtoken");
+const UserModelAuthMiddleware = require("../models/User");
+const JWT_SECRET_AUTH_MIDDLEWARE = process.env.JWT_SECRET;
 
 const protect = async (req, res, next) => {
   let token;
@@ -22,13 +21,11 @@ const protect = async (req, res, next) => {
       );
 
       // Get user from the token payload (excluding password)
-      // The payload of our token includes userId
       req.user = await UserModelAuthMiddleware.findById(decoded.userId).select(
         "-password"
       );
 
       if (!req.user) {
-        // This case might happen if the user was deleted after token issuance
         return res
           .status(401)
           .json({ message: "Not authorized, user not found for this token" });
@@ -57,4 +54,5 @@ const protect = async (req, res, next) => {
   }
 };
 
-module.exports = { protect };
+// ✅ DEFINITIVE FIX: Export the function directly, not as an object.
+module.exports = protect;

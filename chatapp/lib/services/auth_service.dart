@@ -4,67 +4,64 @@ import 'package:http/http.dart' as http;
 import '../config/api_constants.dart';
 import 'token_storage_service.dart';
 import '../models/user_model.dart';
-import 'services_locator.dart'; // To access global userService instance for fetchAndSetCurrentUser
+import 'services_locator.dart';
+import 'crypto_service.dart';
 
 class AuthService {
   final String _authBaseUrl = '$API_BASE_URL/auth';
   final TokenStorageService _tokenStorageService = TokenStorageService();
+  final CryptoService _cryptoService = CryptoService();
 
   User? _currentUser;
   User? get currentUser => _currentUser;
 
   void setCurrentUser(User? user) {
     _currentUser = user;
-    print(
-      "AuthService: Current user ${user == null ? 'cleared' : 'set to ${user.fullName} (ID: ${user.id})'}.",
-    );
+    print("AuthService: Current user set to ${user?.fullName}");
+  }
+
+  // ✅ DEFINITIVE FIX: This method now ensures keys are fully loaded/generated.
+  Future<void> _handleLoginSuccess() async {
+    try {
+      // ✅ DEFINITIVE FIX: Start the crypto initialization, but don't wait here.
+      // Other services will wait on the `cryptoService.ready` future.
+      _cryptoService.init();
+
+      // Upload the public key to the server.
+      await _cryptoService
+          .ready; // Ensure keys are generated before getting public key
+      final myPublicKey = await _cryptoService.getMyPublicKey();
+
+      final token = await _tokenStorageService.getToken();
+      await http.post(
+        Uri.parse('$API_BASE_URL/keys/upload'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: json.encode({'publicKey': myPublicKey}),
+      );
+      print("✅ AuthService: Public key upload initiated.");
+    } catch (e) {
+      print("❌ AuthService: Key setup error: $e");
+    }
   }
 
   Future<User?> fetchAndSetCurrentUser() async {
     final token = await _tokenStorageService.getToken();
     if (token != null && _currentUser == null) {
-      print(
-        "AuthService: Token exists, _currentUser is null. Attempting to fetch profile from server.",
-      );
       try {
-        // Use the global userService instance from service_locator.dart
         final profileResult = await userService.getUserProfile();
         if (profileResult['success']) {
           setCurrentUser(profileResult['data'] as User);
-          print(
-            "AuthService: Profile fetched and currentUser set: ${_currentUser?.fullName}",
-          );
+          // After fetching the user, wait for their keys to be ready.
+          await _handleLoginSuccess();
         } else {
-          print(
-            "AuthService: Failed to fetch profile for token. Error: ${profileResult['message']}",
-          );
-          // If token is invalid (e.g., 401 error from getUserProfile), log out.
-          // This handles cases where a stored token might have expired or become invalid.
-          String message =
-              profileResult['message']?.toString().toLowerCase() ?? "";
-          if (message.contains('token') ||
-              message.contains('unauthorized') ||
-              message.contains('not authenticated')) {
-            print(
-              "AuthService: Invalid token detected during profile fetch. Logging out.",
-            );
-            await logout(); // This will clear the token and _currentUser
-          }
+          await logout();
         }
       } catch (e) {
-        print(
-          "AuthService: Exception during fetchAndSetCurrentUser: $e. Logging out as a precaution.",
-        );
-        await logout(); // Logout if fetching profile causes an unhandled exception
+        await logout();
       }
-    } else if (_currentUser != null) {
-      print(
-        "AuthService: fetchAndSetCurrentUser - CurrentUser already set: ${_currentUser?.fullName}",
-      );
-    } else {
-      print(
-        "AuthService: fetchAndSetCurrentUser - No token, cannot fetch user.",
-      );
     }
     return _currentUser;
   }
@@ -75,6 +72,7 @@ class AuthService {
     required String password,
   }) async {
     try {
+      // ... (http.post for signup remains the same)
       final response = await http.post(
         Uri.parse('$_authBaseUrl/signup'),
         headers: <String, String>{
@@ -89,12 +87,14 @@ class AuthService {
 
       final responseData = jsonDecode(response.body);
       if (response.statusCode == 201) {
-        if (responseData['token'] != null) {
+        if (responseData['token'] != null)
           await _tokenStorageService.storeToken(responseData['token']);
-        }
-        if (responseData['user'] != null) {
+        if (responseData['user'] != null)
           setCurrentUser(User.fromJson(responseData['user']));
-        }
+
+        // This will generate and upload keys for the new user
+        await _handleLoginSuccess();
+
         return {'success': true, 'data': responseData};
       } else {
         return {
@@ -103,10 +103,9 @@ class AuthService {
         };
       }
     } catch (e) {
-      print('AuthService SignUp Error: $e');
       return {
         'success': false,
-        'message': 'An unexpected error occurred: ${e.toString()}',
+        'message': 'An unexpected error: ${e.toString()}',
       };
     }
   }
@@ -116,6 +115,7 @@ class AuthService {
     required String password,
   }) async {
     try {
+      // ... (http.post for login remains the same)
       final response = await http.post(
         Uri.parse('$_authBaseUrl/login'),
         headers: <String, String>{
@@ -129,12 +129,14 @@ class AuthService {
 
       final responseData = jsonDecode(response.body);
       if (response.statusCode == 200) {
-        if (responseData['token'] != null) {
+        if (responseData['token'] != null)
           await _tokenStorageService.storeToken(responseData['token']);
-        }
-        if (responseData['user'] != null) {
+        if (responseData['user'] != null)
           setCurrentUser(User.fromJson(responseData['user']));
-        }
+
+        // ✅ After a successful login, ensure the user's keys are ready.
+        await _handleLoginSuccess();
+
         return {'success': true, 'data': responseData};
       } else {
         return {
@@ -143,10 +145,9 @@ class AuthService {
         };
       }
     } catch (e) {
-      print('AuthService Login Error: $e');
       return {
         'success': false,
-        'message': 'An unexpected error occurred: ${e.toString()}',
+        'message': 'An unexpected error: ${e.toString()}',
       };
     }
   }
@@ -154,7 +155,5 @@ class AuthService {
   Future<void> logout() async {
     await _tokenStorageService.deleteToken();
     setCurrentUser(null);
-    print("AuthService: User logged out, token and currentUser cleared.");
-    // Note: Socket disconnection is handled by disconnectServicesOnLogout() in service_locator
   }
 }

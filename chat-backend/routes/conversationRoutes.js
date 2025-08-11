@@ -2,7 +2,7 @@
 // Purpose: API endpoints for managing conversations with multiple admin support.
 const expressConvRoutes = require("express");
 const routerConvRoutes = expressConvRoutes.Router();
-const { protect: protectConvRoutes } = require("../middleware/authMiddleware");
+const protect = require("../middleware/authMiddleware");
 const ConversationModelConvRoutes = require("../models/Conversation"); // Uses new model with groupAdmins
 const UserModelConvRoutes = require("../models/User");
 const MessageModelConvRoutes = require("../models/Message");
@@ -31,7 +31,7 @@ const populateConversation = (conversation) => {
 // @route   GET /api/conversations
 // @access  Private
 // <<< MODIFIED to calculate and include unreadCount >>>
-routerConvRoutes.get("/", protectConvRoutes, async (req, res) => {
+routerConvRoutes.get("/", protect, async (req, res) => {
   try {
     let conversations = await ConversationModelConvRoutes.find({
       participants: req.user._id,
@@ -76,54 +76,48 @@ routerConvRoutes.get("/", protectConvRoutes, async (req, res) => {
 // @desc    Mark messages in a conversation as read by the current user
 // @route   PUT /api/conversations/:conversationId/read
 // @access  Private
-routerConvRoutes.put(
-  "/:conversationId/read",
-  protectConvRoutes,
-  async (req, res) => {
-    const { conversationId } = req.params;
-    const currentUserId = req.user._id;
+routerConvRoutes.put("/:conversationId/read", protect, async (req, res) => {
+  const { conversationId } = req.params;
+  const currentUserId = req.user._id;
 
-    try {
-      if (!mongoose.Types.ObjectId.isValid(conversationId)) {
-        return res
-          .status(400)
-          .json({ message: "Invalid conversation ID format." });
-      }
-
-      // Add the current user's ID to the 'readBy' array of all messages
-      // in this conversation where they are not already present.
-      const result = await MessageModelConvRoutes.updateMany(
-        {
-          conversationId: conversationId,
-          readBy: { $nin: [currentUserId] }, // Find messages not read by this user
-        },
-        {
-          $addToSet: { readBy: currentUserId }, // Add user's ID to the readBy array
-        },
-        { new: true }
-      );
-
-      console.log(
-        `Marked as read for user ${currentUserId} in convo ${conversationId}. Messages updated: ${result.modifiedCount}`
-      );
-
-      res.status(200).json({
-        message: "Messages marked as read successfully.",
-        modifiedCount: result.modifiedCount,
-      });
-    } catch (error) {
-      console.error("Mark as Read Error:", error);
-      res
-        .status(500)
-        .json({ message: "Server error marking messages as read." });
+  try {
+    if (!mongoose.Types.ObjectId.isValid(conversationId)) {
+      return res
+        .status(400)
+        .json({ message: "Invalid conversation ID format." });
     }
+
+    // Add the current user's ID to the 'readBy' array of all messages
+    // in this conversation where they are not already present.
+    const result = await MessageModelConvRoutes.updateMany(
+      {
+        conversationId: conversationId,
+        readBy: { $nin: [currentUserId] }, // Find messages not read by this user
+      },
+      {
+        $addToSet: { readBy: currentUserId }, // Add user's ID to the readBy array
+      },
+      { new: true }
+    );
+
+    console.log(
+      `Marked as read for user ${currentUserId} in convo ${conversationId}. Messages updated: ${result.modifiedCount}`
+    );
+
+    res.status(200).json({
+      message: "Messages marked as read successfully.",
+      modifiedCount: result.modifiedCount,
+    });
+  } catch (error) {
+    console.error("Mark as Read Error:", error);
+    res.status(500).json({ message: "Server error marking messages as read." });
   }
-);
+});
 
 // @desc    Create or get a one-to-one conversation
 // @route   POST /api/conversations/one-to-one
 // @access  Private
-routerConvRoutes.post("/one-to-one", protectConvRoutes, async (req, res) => {
+routerConvRoutes.post("/one-to-one", protect, async (req, res) => {
   const { userId: otherUserIdString } = req.body;
   const currentUserId = req.user._id;
 
@@ -209,7 +203,7 @@ async function createAndBroadcastSystemMessage(req, conversationId, content) {
 // @desc    Create a new group chat
 // @route   POST /api/conversations/group
 // @access  Private
-routerConvRoutes.post("/group", protectConvRoutes, async (req, res) => {
+routerConvRoutes.post("/group", protect, async (req, res) => {
   const { name, participants: participantIdStrings } = req.body;
   const currentUserId = req.user._id; // This is an ObjectId
 
@@ -301,7 +295,7 @@ routerConvRoutes.post("/group", protectConvRoutes, async (req, res) => {
 // @route   PUT /api/conversations/group/:conversationId/picture
 routerConvRoutes.put(
   "/group/:conversationId/picture",
-  protectConvRoutes,
+  protect,
   uploadMiddleware.single("groupPicture"),
   handleMulterErrorMiddleware,
   async (req, res) => {
@@ -383,7 +377,7 @@ routerConvRoutes.put(
 // @route   PUT /api/conversations/group/:conversationId/name
 routerConvRoutes.put(
   "/group/:conversationId/name",
-  protectConvRoutes,
+  protect,
   async (req, res) => {
     const { conversationId } = req.params;
     const { name: newGroupName } = req.body;
@@ -438,7 +432,7 @@ routerConvRoutes.put(
 // @route   PUT /api/conversations/group/:conversationId/leave
 routerConvRoutes.put(
   "/group/:conversationId/leave",
-  protectConvRoutes,
+  protect,
   async (req, res) => {
     const { conversationId } = req.params;
     const currentUserId = req.user._id;
@@ -537,7 +531,7 @@ routerConvRoutes.put(
 // @route   PUT /api/conversations/group/:conversationId/add-member
 routerConvRoutes.put(
   "/group/:conversationId/add-member",
-  protectConvRoutes,
+  protect,
   async (req, res) => {
     const { conversationId } = req.params;
     const { userId: userIdToAddString } = req.body;
@@ -621,7 +615,7 @@ routerConvRoutes.put(
 
 routerConvRoutes.put(
   "/group/:conversationId/remove-member",
-  protectConvRoutes,
+  protect,
   async (req, res) => {
     const { conversationId } = req.params;
     const { userId: userIdToRemoveString } = req.body;
@@ -675,11 +669,9 @@ routerConvRoutes.put(
         userObjectIdToRemove
       );
       if (!memberToRemove) {
-        return res
-          .status(404)
-          .json({
-            message: "The user you are trying to remove does not exist.",
-          });
+        return res.status(404).json({
+          message: "The user you are trying to remove does not exist.",
+        });
       }
 
       // --- END OF THE FIX ---
@@ -696,11 +688,9 @@ routerConvRoutes.put(
         adminId.equals(userObjectIdToRemove)
       );
       if (isTargetAdmin) {
-        return res
-          .status(400)
-          .json({
-            message: "Cannot remove an admin. Please demote them first.",
-          });
+        return res.status(400).json({
+          message: "Cannot remove an admin. Please demote them first.",
+        });
       }
 
       conversation.participants.splice(participantIndex, 1);
@@ -745,7 +735,7 @@ routerConvRoutes.put(
 // @body    { userIdToPromote: "ID of the member to make admin" }
 routerConvRoutes.put(
   "/group/:conversationId/promote-admin",
-  protectConvRoutes,
+  protect,
   async (req, res) => {
     const { conversationId } = req.params;
     const { userIdToPromote } = req.body;
@@ -832,7 +822,7 @@ routerConvRoutes.put(
 // @body    { userIdToDemote: "ID of the admin to demote" }
 routerConvRoutes.put(
   "/group/:conversationId/demote-admin",
-  protectConvRoutes,
+  protect,
   async (req, res) => {
     const { conversationId } = req.params;
     const { userIdToDemote } = req.body;

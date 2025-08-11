@@ -22,6 +22,11 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import '../models/reaction_model.dart';
 
+// --- ADDED: Import for CryptoService ---
+import '../services/crypto_service.dart';
+import '../services/cache_service.dart';
+import '../services/socket_service.dart';
+
 import '../config/api_constants.dart';
 import 'profile_screen.dart';
 
@@ -42,24 +47,25 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
-  // <<< NEW: Key for AnimatedList >>>
   final GlobalKey<AnimatedListState> _listKey = GlobalKey<AnimatedListState>();
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final Map<String, GlobalKey> _messageKeys = {};
 
+  // --- ADDED: Instance of CryptoService ---
+  final CryptoService _cryptoService = CryptoService();
+  final CacheService _cacheService = CacheService();
+
   List<Message> _messages = [];
   bool _isLoadingMessages = true;
   bool _isUploadingFile = false;
   String? _errorMessage;
-  // NEW: To track the message that should be temporarily highlighted
   String? _highlightedMessageId;
   StreamSubscription? _messageSubscription;
   StreamSubscription? _typingSubscription;
   StreamSubscription? _activeUsersSubscription;
   StreamSubscription? _conversationUpdateSubscription;
   StreamSubscription? _messageStatusUpdateSubscription;
-
   StreamSubscription? _messageUpdateSubscription;
 
   Message? _replyingToMessage;
@@ -67,30 +73,25 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   User? _currentUser;
   late Conversation _currentConversation;
 
-  // NEW: For audio recording
   final AudioRecorder _audioRecorder = AudioRecorder();
   bool _isRecording = false;
   String? _audioPath;
 
-  // State variables for search
   bool _isSearching = false;
   final TextEditingController _searchController = TextEditingController();
   List<Message> _searchResults = [];
   int _currentSearchIndex = 0;
   bool _isSearchLoading = false;
 
-  // State variables for pagination
   int _currentPage = 1;
   bool _isLoadingMore = false;
   bool _hasMoreMessages = true;
 
   bool _isOtherUserTyping = false;
-  bool _isTargetUserOnline = false;
+  // bool _isTargetUserOnline = false;
   Timer? _typingTimer;
   String? _downloadingFileId;
   bool _isLeavingGroup = false;
-  // Tracks loading state for remove/make admin/demote admin for a specific member
-  // Key: Member ID, Value: true if an admin action is in progress for this member
   final Map<String, bool> _isManagingMemberMap = {};
 
   final TextEditingController _editGroupNameController =
@@ -133,7 +134,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     _currentUser = authService.currentUser;
     _currentConversation = widget.conversation;
     _editGroupNameController.text = _currentConversation.groupName ?? "";
-    //Add the scroll listener for pagination
     _scrollController.addListener(_scrollListener);
 
     if (_currentUser == null) {
@@ -143,9 +143,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
 
     _messageController.addListener(() {
       if (mounted) {
-        setState(() {
-          // This empty setState call is enough to trigger a rebuild
-        });
+        setState(() {});
       }
     });
 
@@ -162,49 +160,33 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       }
     });
 
-    // <<< NEW: Mark messages as read when entering the screen >>>
-    // if (widget.conversation.unreadCount > 0) {
-    //   _markConversationAsRead();
-    // }
-
     _markConversationAsRead();
 
-    _fetchMessages();
+    _loadInitialMessages();
     socketService.joinConversation(_currentConversation.id);
     _subscribeToSocketEvents();
-    _checkInitialOnlineStatus();
+    // _checkInitialOnlineStatus();
 
-    // <<< NEW: Immediately mark messages as read when entering screen >>>
-    // We do this after a small delay to ensure the view is built.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _markVisibleMessagesAsRead();
     });
   }
 
   void _scrollListener() {
-    // If we're at the top of the list and not already loading, fetch more
     if (_scrollController.position.pixels ==
             _scrollController.position.minScrollExtent &&
         !_isLoadingMore) {
-      _fetchMoreMessages();
+      _fetchMoreMessagesFromServer();
     }
   }
 
-  // <<< NEW METHOD >>>
   void _markConversationAsRead() {
-    print(
-      "ChatScreen: Marking conversation ${widget.conversation.id} as read on server.",
-    );
-    // This is a "fire-and-forget" call. We don't need to wait for it.
-    // The UI has already been updated optimistically in HomeScreen.
     chatService.markAsRead(widget.conversation.id).catchError((e) {
-      // Don't show a disruptive error, just log it.
       print("ChatScreen: Background 'mark as read' failed: $e");
     });
   }
 
   void _handleInvalidSession() {
-    print("ChatScreen Error: Current user is null! Navigating back.");
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         Navigator.of(context).pop();
@@ -219,51 +201,102 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   }
 
   void _subscribeToSocketEvents() {
-    _messageSubscription = socketService.messageStream.listen((newMessage) {
-      if (newMessage.conversationId == _currentConversation.id && mounted) {
-        // MODIFIED: Added a null check for newMessage.sender
-        if (!isGroupChat &&
-            widget.otherUser.id.isNotEmpty &&
-            newMessage.sender?.id == widget.otherUser.id) {
-          setState(() {
-            _isOtherUserTyping = false;
-          });
+    _messageSubscription = socketService.messageStream.listen((message) async {
+      if (message.conversationId == _currentConversation.id && mounted) {
+        Message messageToShow = message;
+        if (message.isEncrypted) {
+          await _cryptoService.ready;
+          String? decryptedContent;
+
+          if (isGroupChat) {
+            decryptedContent = await _cryptoService.decryptGroupMessage(
+              message.conversationId,
+              message.content,
+            );
+          } else {
+            decryptedContent = await _cryptoService.decrypt1on1Message(
+              widget.otherUser.id,
+              message.content,
+            );
+          }
+          messageToShow = message.copyWith(
+            content: decryptedContent ?? '[❌ Decryption Failed]',
+          );
         }
-        // <<< MODIFIED: Animate new message in >>>
-        final int insertIndex = _messages.length;
-        setState(() {
-          _messages.add(newMessage);
-        });
-        _listKey.currentState?.insertItem(
-          insertIndex,
-          duration: const Duration(milliseconds: 400),
-        );
-        _scrollToBottom();
+
+        // --- ADDED: Save incoming message to cache ---
+        await _cacheService.addOrUpdateMessage(messageToShow);
+
+        if (mounted) {
+          setState(() {
+            _messages.add(messageToShow);
+          });
+          _scrollToBottom();
+          // --- Mark as read if the incoming message is from another user ---
+          if (message.sender?.id != _currentUser?.id) {
+            socketService.markMessagesAsRead(_currentConversation.id);
+          }
+        }
       }
     });
 
-    // <<< NEW: Listen for status updates from SocketService >>>
+    _messageUpdateSubscription = socketService.messageUpdateStream.listen((
+      updatedMessage,
+    ) async {
+      if (mounted) {
+        final index = _messages.indexWhere((m) => m.id == updatedMessage.id);
+        if (index != -1) {
+          Message messageToUpdate = updatedMessage;
+          if (updatedMessage.isEncrypted) {
+            await _cryptoService.ready;
+            String? decryptedContent;
+            if (isGroupChat) {
+              decryptedContent = await _cryptoService.decryptGroupMessage(
+                updatedMessage.conversationId,
+                updatedMessage.content,
+              );
+            } else {
+              decryptedContent = await _cryptoService.decrypt1on1Message(
+                widget.otherUser.id,
+                updatedMessage.content,
+              );
+            }
+            messageToUpdate = updatedMessage.copyWith(
+              content: decryptedContent ?? '[❌ Decryption Failed]',
+            );
+          }
+
+          // --- ADDED: Update message in cache ---
+          await _cacheService.addOrUpdateMessage(messageToUpdate);
+
+          setState(() {
+            _messages[index] = messageToUpdate;
+          });
+        }
+      }
+    });
+
     _messageStatusUpdateSubscription = socketService.messageStatusUpdateStream
         .listen((update) {
           if (update['conversationId'] == _currentConversation.id && mounted) {
             setState(() {
               if (update['status'] == 'read') {
-                // All messages from the other user have been read. Update all relevant messages.
-                for (var message in _messages) {
-                  if (message.sender?.id == _currentUser?.id &&
-                      message.status != 'read') {
-                    message.status = 'read';
+                for (var i = 0; i < _messages.length; i++) {
+                  if (_messages[i].sender?.id == _currentUser?.id &&
+                      _messages[i].status != 'read') {
+                    _messages[i] = _messages[i].copyWith(status: 'read');
                   }
                 }
               } else if (update['status'] == 'delivered') {
-                // A specific message has been delivered.
                 final messageId = update['messageId'];
                 final messageIndex = _messages.indexWhere(
                   (m) => m.id == messageId,
                 );
                 if (messageIndex != -1 &&
                     _messages[messageIndex].status == 'sent') {
-                  _messages[messageIndex].status = 'delivered';
+                  _messages[messageIndex] = _messages[messageIndex].copyWith(
+                    status: 'delivered',
+                  );
                 }
               }
             });
@@ -291,32 +324,19 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           });
         }
       });
-      _activeUsersSubscription = socketService.activeUsersStream.listen((
-        activeIds,
-      ) {
-        if (mounted)
-          setState(() {
-            _isTargetUserOnline = activeIds.contains(widget.otherUser.id);
-          });
-      });
     }
   }
 
-  void _checkInitialOnlineStatus() {
-    if (!isGroupChat && widget.otherUser.id.isNotEmpty) {
-      // Initial check for online status can be done here if SocketService provides a method.
-      // For now, relying on the stream to update.
-    }
-  }
+  void _checkInitialOnlineStatus() {}
 
-  // Method to show options
   void _showMessageOptions(BuildContext context, Message message) {
-    // Only show options for the current user's own messages that are not deleted
     if (message.sender == null ||
         message.sender!.id != _currentUser?.id ||
         message.deletedAt != null) {
       return;
     }
+
+    final bool isMyMessage = message.sender?.id == _currentUser?.id;
 
     showModalBottomSheet(
       context: context,
@@ -325,24 +345,36 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           child: Wrap(
             children: <Widget>[
               ListTile(
-                leading: const Icon(Icons.edit_outlined),
-                title: const Text('Edit'),
+                leading: const Icon(Icons.reply_outlined),
+                title: const Text('Reply'),
                 onTap: () {
                   Navigator.of(context).pop();
-                  _showEditDialog(message);
+                  setState(() {
+                    _replyingToMessage = message;
+                  });
                 },
               ),
-              ListTile(
-                leading: const Icon(Icons.delete_outline, color: Colors.red),
-                title: const Text(
-                  'Delete',
-                  style: TextStyle(color: Colors.red),
+              if (isMyMessage)
+                ListTile(
+                  leading: const Icon(Icons.edit_outlined),
+                  title: const Text('Edit'),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    _showEditDialog(message);
+                  },
                 ),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _showDeleteConfirmation(message);
-                },
-              ),
+              if (isMyMessage)
+                ListTile(
+                  leading: const Icon(Icons.delete_outline, color: Colors.red),
+                  title: const Text(
+                    'Delete',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    _showDeleteConfirmation(message);
+                  },
+                ),
             ],
           ),
         );
@@ -350,7 +382,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
-  // Method to show the edit dialog
   void _showEditDialog(Message message) {
     final controller = TextEditingController(text: message.content);
     showDialog(
@@ -376,7 +407,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                       message.id,
                       controller.text,
                     );
-                    // Find and update the message in the local list
                     setState(() {
                       final index = _messages.indexWhere(
                         (m) => m.id == updatedMessage.id,
@@ -386,7 +416,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                       }
                     });
                   } catch (e) {
-                    /* handle error */
+                    // handle error
                   }
                   Navigator.of(context).pop();
                 },
@@ -396,7 +426,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
-  // Method to confirm deletion
   void _showDeleteConfirmation(Message message) {
     showDialog(
       context: context,
@@ -430,7 +459,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                       }
                     });
                   } catch (e) {
-                    /* handle error */
+                    // handle error
                   }
                   Navigator.of(context).pop();
                 },
@@ -453,54 +482,190 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     _messageStatusUpdateSubscription?.cancel();
     _messageUpdateSubscription?.cancel();
     _typingTimer?.cancel();
-    if (socketService.socket != null && socketService.socket!.connected)
+    if (socketService.socket != null && socketService.socket!.connected) {
       socketService.leaveConversation(_currentConversation.id);
+    }
     super.dispose();
   }
 
-  // <<< NEW: Method to tell the server what has been read >>>
   void _markVisibleMessagesAsRead() {
-    if (isGroupChat) return; // Logic is for 1-to-1 for now
+    if (isGroupChat) return;
 
-    // Find any messages from the other user that are not yet marked as 'read'.
     final bool hasUnreadMessages = _messages.any(
       (m) => m.sender?.id == widget.otherUser.id && m.status != 'read',
     );
 
     if (hasUnreadMessages) {
-      print("ChatScreen: Marking visible messages as read...");
-      // Tell the server to mark all messages in this conversation as read by me.
       socketService.markMessagesAsRead(_currentConversation.id);
-
-      // Also optimistically update the local state for immediate feedback, though
-      // the server's broadcast (`messagesRead` event) would eventually do this too.
-      // setState(() {
-      //   for (var message in _messages) {
-      //     if (message.sender.id != _currentUser?.id) {
-      //       // This local update is less critical if the sender's UI is what we care about.
-      //       // The main purpose of the socket event is to update the *sender's* UI.
-      //     }
-      //   }
-      // });
     }
   }
 
+  // --- NEW: Cache-then-network strategy for messages ---
+  Future<void> _loadInitialMessages() async {
+    setState(() {
+      _isLoadingMessages = true;
+      _errorMessage = null;
+    });
+
+    // 1. Load from cache
+    final cachedMessages = _cacheService.getMessages(_currentConversation.id);
+    if (cachedMessages.isNotEmpty) {
+      setState(() {
+        _messages = cachedMessages;
+        _isLoadingMessages = false;
+      });
+      _scrollToBottom();
+    }
+
+    // 2. Fetch from network
+    await _fetchMessagesFromServer();
+  }
+
+  Future<void> _fetchMessagesFromServer() async {
+    try {
+      final messagesFromServer = await chatService.getMessages(
+        _currentConversation.id,
+      );
+      final decryptedMessages = await _decryptMessageList(messagesFromServer);
+
+      await _cacheService.saveMessages(
+        _currentConversation.id,
+        decryptedMessages,
+      );
+
+      if (mounted) {
+        setState(() {
+          _messages = decryptedMessages;
+          _isLoadingMessages = false;
+        });
+        _scrollToBottom();
+        socketService.markMessagesAsRead(_currentConversation.id);
+      }
+    } catch (e) {
+      if (mounted && _messages.isEmpty) {
+        setState(() {
+          _errorMessage =
+              "Failed to load messages: ${e.toString().replaceFirst("Exception: ", "")}";
+          _isLoadingMessages = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _fetchMoreMessagesFromServer() async {
+    if (_isLoadingMore || !_hasMoreMessages) return;
+
+    setState(() => _isLoadingMore = true);
+    _currentPage++;
+
+    try {
+      final newMessagesFromServer = await chatService.getMessages(
+        _currentConversation.id,
+        page: _currentPage,
+      );
+
+      if (newMessagesFromServer.isEmpty) {
+        if (mounted) setState(() => _hasMoreMessages = false);
+      } else {
+        final decryptedNewMessages = await _decryptMessageList(
+          newMessagesFromServer,
+        );
+
+        await _cacheService.saveMessages(
+          _currentConversation.id,
+          decryptedNewMessages,
+        );
+
+        if (mounted) {
+          setState(() {
+            _messages.insertAll(0, decryptedNewMessages);
+          });
+        }
+      }
+    } catch (e) {
+      print("Failed to load more messages: $e");
+      _currentPage--;
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingMore = false);
+      }
+    }
+  }
+
+  // --- NEW: Helper function to decrypt a list of messages ---
+  Future<List<Message>> _decryptMessageList(List<Message> messages) async {
+    await _cryptoService.ready;
+    return Future.wait(
+      messages.map((message) async {
+        if (message.isEncrypted) {
+          String? decryptedContent;
+          if (isGroupChat) {
+            decryptedContent = await _cryptoService.decryptGroupMessage(
+              message.conversationId,
+              message.content,
+            );
+          } else {
+            decryptedContent = await _cryptoService.decrypt1on1Message(
+              widget.otherUser.id,
+              message.content,
+            );
+          }
+          return message.copyWith(
+            content: decryptedContent ?? '[❌ Decryption Failed]',
+          );
+        } else {
+          return message;
+        }
+      }),
+    );
+  }
+
+  // --- This function now handles decryption for fetched messages ---
   Future<void> _fetchMessages() async {
     if (!mounted) return;
     setState(() {
       _isLoadingMessages = true;
       _errorMessage = null;
-      _currentPage = 1; // Reset to page 1
-      _hasMoreMessages = true; // Reset
+      _currentPage = 1;
+      _hasMoreMessages = true;
     });
+
     try {
-      final messages = await chatService.getMessages(_currentConversation.id);
+      final messagesFromServer = await chatService.getMessages(
+        _currentConversation.id,
+      );
+      await _cryptoService.ready;
+
+      final decryptedMessages = await Future.wait(
+        messagesFromServer.map((message) async {
+          if (message.isEncrypted) {
+            String? decryptedContent;
+            if (isGroupChat) {
+              decryptedContent = await _cryptoService.decryptGroupMessage(
+                message.conversationId,
+                message.content,
+              );
+            } else {
+              decryptedContent = await _cryptoService.decrypt1on1Message(
+                widget.otherUser.id,
+                message.content,
+              );
+            }
+            return message.copyWith(
+              content: decryptedContent ?? '[❌ Decryption Failed]',
+            );
+          } else {
+            return message;
+          }
+        }),
+      );
+
       if (mounted) {
         setState(() {
-          _messages = messages;
+          _messages = decryptedMessages;
           _isLoadingMessages = false;
         });
-        // Now that we know exactly which messages arrived, tell the server to mark them read:
+
         socketService.markMessagesAsRead(_currentConversation.id);
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (_scrollController.hasClients) {
@@ -522,29 +687,56 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     }
   }
 
+  // --- CORRECTED: This function also now handles decryption for paginated messages ---
   Future<void> _fetchMoreMessages() async {
     if (_isLoadingMore || !_hasMoreMessages) return;
 
     setState(() => _isLoadingMore = true);
-
-    _currentPage++; // Go to the next page
+    _currentPage++;
 
     try {
-      final newMessages = await chatService.getMessages(
+      final newMessagesFromServer = await chatService.getMessages(
         _currentConversation.id,
         page: _currentPage,
       );
 
-      if (newMessages.isEmpty) {
-        // If we get an empty list, there are no more messages to load
-        setState(() => _hasMoreMessages = false);
+      if (newMessagesFromServer.isEmpty) {
+        if (mounted) setState(() => _hasMoreMessages = false);
       } else {
-        // Insert the new (older) messages at the beginning of our list
-        _messages.insertAll(0, newMessages);
+        await _cryptoService.ready;
+
+        final decryptedNewMessages = await Future.wait(
+          newMessagesFromServer.map((message) async {
+            if (message.isEncrypted) {
+              String? decryptedContent;
+              if (isGroupChat) {
+                decryptedContent = await _cryptoService.decryptGroupMessage(
+                  message.conversationId,
+                  message.content,
+                );
+              } else {
+                decryptedContent = await _cryptoService.decrypt1on1Message(
+                  widget.otherUser.id,
+                  message.content,
+                );
+              }
+              return message.copyWith(
+                content: decryptedContent ?? '[❌ Decryption Failed]',
+              );
+            } else {
+              return message;
+            }
+          }),
+        );
+
+        if (mounted) {
+          setState(() {
+            _messages.insertAll(0, decryptedNewMessages);
+          });
+        }
       }
     } catch (e) {
       print("Failed to load more messages: $e");
-      // Optionally show a snackbar or revert the page counter
       _currentPage--;
     } finally {
       if (mounted) {
@@ -553,17 +745,36 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     }
   }
 
+  // --- Handles encryption for both 1-to-1 and group chats ---
   void _sendMessage() {
     final String text = _messageController.text.trim();
     if (text.isEmpty || _currentUser == null) return;
+
+    String? recipientId;
+    // For 1-to-1 chats, we need the recipient's ID. For groups, it's null.
+    if (!isGroupChat) {
+      try {
+        final otherParticipant = _currentConversation.participants.firstWhere(
+          (p) => p.id != _currentUser!.id,
+        );
+        recipientId = otherParticipant.id;
+      } catch (e) {
+        print("❌ FAILED: Could not find other participant. Error: $e");
+        return; // Don't send if recipient can't be found
+      }
+    }
+
     socketService.sendMessage(
       conversationId: _currentConversation.id,
       senderId: _currentUser!.id,
       content: text,
+      recipientId: recipientId, // Null for group chats
+      isEncrypted: true, // Encrypt all text messages by default now
       replyTo: _replyingToMessage?.id,
       replySnippet: _replyingToMessage?.content,
       replySenderName: _replyingToMessage?.sender?.fullName,
     );
+
     _messageController.clear();
     if (!isGroupChat) _emitStopTyping();
     _scrollToBottom();
@@ -595,31 +806,26 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       if (result != null && result.files.single.path != null) {
         File file = File(result.files.single.path!);
 
-        // <<< MODIFIED: Navigate to Preview Screen >>>
-        // We push the new screen and wait for it to pop. It will return the caption.
         final String? caption = await Navigator.of(context).push<String>(
           MaterialPageRoute(
             builder: (context) => FilePreviewScreen(file: file),
           ),
         );
 
-        // If the user closed the preview screen without sending, caption will be null.
         if (caption == null) return;
 
-        // If the user pressed send, proceed with uploading and sending the message
         setState(() => _isUploadingFile = true);
 
-        // 1. Upload the file
         final fileData = await chatService.uploadChatFile(file);
 
-        // 2. Send the message via socket with the file URL and caption
         socketService.sendMessage(
           conversationId: _currentConversation.id,
           senderId: _currentUser!.id,
-          content: caption, // Use the caption from the preview screen
+          content: caption,
           fileUrl: fileData['fileUrl'],
           fileType: fileData['fileType'],
           fileName: fileData['fileName'],
+          isEncrypted: false,
           replyTo: _replyingToMessage?.id,
           replySnippet: _replyingToMessage?.content,
           replySenderName: _replyingToMessage?.sender?.fullName,
@@ -650,24 +856,18 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   Future<void> _startRecording() async {
     try {
       if (await _audioRecorder.hasPermission()) {
-        // Get a writable directory path
         final tempDir = await getTemporaryDirectory();
-        // Create a full, valid path for the audio file
         final filePath = p.join(
           tempDir.path,
           'voice_message_${DateTime.now().millisecondsSinceEpoch}.m4a',
         );
 
-        print("DEBUG: Recording will be saved to: $filePath");
-
-        // Start recording to the valid path
         await _audioRecorder.start(const RecordConfig(), path: filePath);
 
         setState(() {
           _isRecording = true;
         });
       } else {
-        print("DEBUG: Microphone permission was denied.");
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Microphone permission not granted.")),
         );
@@ -677,11 +877,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     }
   }
 
-  // NEW: Add a method to start or stop searching
   void _toggleSearch() {
     setState(() {
       _isSearching = !_isSearching;
-      // Reset search state when closing
       if (!_isSearching) {
         _searchController.clear();
         _searchResults = [];
@@ -691,8 +889,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     });
   }
 
-  // NEW: Method to execute the search
-  // Method to execute the search
   Future<void> _executeSearch() async {
     if (_searchController.text.isEmpty) return;
 
@@ -720,7 +916,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     } catch (e) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text("Search failed: ${e.toString()}")));
+      ).showSnackBar(SnackBar(content: Text("Search failed: $e")));
     } finally {
       if (mounted) {
         setState(() => _isSearchLoading = false);
@@ -728,7 +924,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     }
   }
 
-  // NEW: Method to navigate search results
   void _navigateToSearchResult(int direction) {
     if (_searchResults.isEmpty) return;
 
@@ -742,7 +937,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     });
   }
 
-  // NEW: Method to stop recording and send the file
   Future<void> _stopRecording() async {
     try {
       final path = await _audioRecorder.stop();
@@ -753,7 +947,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         _audioPath = path;
       });
 
-      // Send the recorded file
       File file = File(path);
       setState(() => _isUploadingFile = true);
 
@@ -762,10 +955,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       socketService.sendMessage(
         conversationId: _currentConversation.id,
         senderId: _currentUser!.id,
-        content: '', // No text content for voice message
+        content: '',
         fileUrl: fileData['fileUrl'],
         fileType: fileData['fileType'],
         fileName: fileData['fileName'],
+        isEncrypted: false,
       );
     } catch (e) {
       print("Error stopping recording: $e");
@@ -775,7 +969,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   }
 
   void _scrollToBottom() {
-    // Use addPostFrameCallback to make sure the new item is built
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
@@ -826,9 +1019,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       );
       if (pickedFile == null || !mounted) return;
 
-      setDialogState(() {
-        /* Show loading for picture change if needed */
-      });
+      setDialogState(() {});
 
       final updatedConversation = await chatService.uploadGroupPicture(
         conversationId: _currentConversation.id,
@@ -848,7 +1039,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         );
       }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -857,11 +1048,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             backgroundColor: Colors.red,
           ),
         );
+      }
     } finally {
-      if (mounted)
-        setDialogState(() {
-          /* Reset loading state */
-        });
+      if (mounted) {
+        setDialogState(() {});
+      }
     }
   }
 
@@ -906,7 +1097,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                               );
                               if (mounted)
                                 Navigator.of(editNameDialogCtx).pop();
-                              // setDialogSaveState(() => isSavingName = false); // Dialog is popped, no need to set state
                             } else if (newName.isEmpty) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
@@ -935,8 +1125,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
-  // Last Seen
-
   String _formatLastSeen(DateTime? lastSeen) {
     if (lastSeen == null) return 'last seen a long time ago';
 
@@ -959,7 +1147,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     }
   }
 
-  /// Scrolls the list to the message with the given ID.
   void _scrollToRepliedMessage(String? repliedMessageId) {
     if (repliedMessageId == null) return;
 
@@ -967,19 +1154,14 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     final targetContext = targetKey?.currentContext;
 
     if (targetContext != null) {
-      // The message is visible on screen, scroll to it
       Scrollable.ensureVisible(
         targetContext,
         duration: const Duration(milliseconds: 500),
         curve: Curves.easeInOut,
-        alignment: 0.5, // Aligns the message to the center of the viewport
+        alignment: 0.5,
       );
-      // Trigger the highlight effect
       _highlightRepliedMessage(repliedMessageId);
     } else {
-      // If the message is not in the current view (e.g., it's much older)
-      // For now, we just show a snackbar. A more advanced implementation
-      // could fetch older messages until the target is found.
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text("Original message not currently loaded."),
@@ -989,13 +1171,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     }
   }
 
-  /// Temporarily highlights a message to draw the user's attention.
   void _highlightRepliedMessage(String messageId) {
     setState(() {
       _highlightedMessageId = messageId;
     });
 
-    // Remove the highlight after 2 seconds
     Future.delayed(const Duration(seconds: 1), () {
       if (mounted) {
         setState(() {
@@ -1027,7 +1207,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         );
       }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -1036,9 +1216,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             backgroundColor: Colors.red,
           ),
         );
+      }
     }
   }
 
+  // --- Handles sharing the group key with new members ---
   void _showGroupMembers(BuildContext context) {
     if (!_currentConversation.isGroupChat) return;
     _editGroupNameController.text = _currentConversation.groupName ?? "";
@@ -1049,7 +1231,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       builder: (BuildContext dialogContext) {
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setDialogState) {
-            // Re-check admin status based on potentially updated _currentConversation
             final bool amIAdminNow =
                 _currentConversation.isGroupChat &&
                 _currentConversation.groupAdmins?.any(
@@ -1125,12 +1306,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   children: [
                     if (amIAdminNow)
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(
-                          16.0,
-                          0,
-                          16.0,
-                          8.0,
-                        ), // Adjusted padding
+                        padding: const EdgeInsets.fromLTRB(16.0, 0, 16.0, 8.0),
                         child: SizedBox(
                           width: double.infinity,
                           child: OutlinedButton.icon(
@@ -1146,7 +1322,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                               padding: const EdgeInsets.symmetric(vertical: 8),
                             ),
                             onPressed: () async {
-                              // Don't pop dialogContext here, let AddMembers return new convo
+                              final List<String> originalMemberIds =
+                                  _currentConversation.participants
+                                      .map((p) => p.id)
+                                      .toList();
+
                               final Conversation? updatedConvData =
                                   await Navigator.of(
                                     context,
@@ -1158,11 +1338,34 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                           ),
                                     ),
                                   );
+
                               if (updatedConvData != null && mounted) {
                                 setState(() {
                                   _currentConversation = updatedConvData;
-                                }); // Update main screen
-                                setDialogState(() {}); // Refresh this dialog
+                                });
+                                setDialogState(() {});
+
+                                // --- KEY SHARING LOGIC ---
+                                final List<String> newMemberIds =
+                                    updatedConvData.participants
+                                        .map((p) => p.id)
+                                        .where(
+                                          (id) =>
+                                              !originalMemberIds.contains(id),
+                                        )
+                                        .toList();
+
+                                if (newMemberIds.isNotEmpty) {
+                                  print(
+                                    "Sharing group key with ${newMemberIds.length} new members.",
+                                  );
+                                  for (final memberId in newMemberIds) {
+                                    socketService.shareGroupKey(
+                                      _currentConversation.id,
+                                      memberId,
+                                    );
+                                  }
+                                }
                               }
                             },
                           ),
@@ -1256,30 +1459,32 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                           tooltip:
                                               "Member Actions for ${member.fullName.split(' ').first}",
                                           onSelected: (String action) {
-                                            if (action == 'remove')
+                                            if (action == 'remove') {
                                               _confirmRemoveMember(
                                                 dialogContext,
                                                 member,
                                                 setDialogState,
                                               );
-                                            else if (action == 'make_admin')
+                                            } else if (action == 'make_admin') {
                                               _confirmPromoteToAdmin(
                                                 dialogContext,
                                                 member,
                                                 setDialogState,
                                               );
-                                            else if (action == 'demote_admin')
+                                            } else if (action ==
+                                                'demote_admin') {
                                               _confirmDemoteAdmin(
                                                 dialogContext,
                                                 member,
                                                 setDialogState,
                                               );
+                                            }
                                           },
                                           itemBuilder:
                                               (
                                                 BuildContext context,
                                               ) => <PopupMenuEntry<String>>[
-                                                if (!isMemberAdmin) // Can promote if not already admin
+                                                if (!isMemberAdmin)
                                                   const PopupMenuItem<String>(
                                                     value: 'make_admin',
                                                     child: ListTile(
@@ -1295,7 +1500,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                                                 .groupAdmins
                                                                 ?.length ??
                                                             0) >
-                                                        1) // Can demote if they are admin AND not the only admin
+                                                        1)
                                                   const PopupMenuItem<String>(
                                                     value: 'demote_admin',
                                                     child: ListTile(
@@ -1337,7 +1542,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                                                 ),
                                               ],
                                         ))
-                                    : null, // No actions for self or if current user is not an admin
+                                    : null,
                           );
                         },
                       ),
@@ -1435,7 +1640,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           );
         }
       } catch (e) {
-        if (mounted)
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
@@ -1444,11 +1649,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               backgroundColor: Colors.red,
             ),
           );
+        }
       } finally {
-        if (mounted)
+        if (mounted) {
           setDialogStateInParent(() {
             _isManagingMemberMap.remove(memberToRemove.id);
           });
+        }
       }
     }
   }
@@ -1507,7 +1714,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           );
         }
       } catch (e) {
-        if (mounted)
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
@@ -1516,11 +1723,13 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               backgroundColor: Colors.red,
             ),
           );
+        }
       } finally {
-        if (mounted)
+        if (mounted) {
           setDialogStateInParent(() {
             _isManagingMemberMap.remove(memberToPromote.id);
           });
+        }
       }
     }
   }
@@ -1577,7 +1786,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           );
         }
       } catch (e) {
-        if (mounted)
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
@@ -1586,114 +1795,123 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               backgroundColor: Colors.red,
             ),
           );
+        }
       } finally {
-        if (mounted)
+        if (mounted) {
           setDialogStateInParent(() {
             _isManagingMemberMap.remove(adminToDemote.id);
           });
+        }
       }
     }
   }
 
   void _showOtherUserDetails(BuildContext context) {
-    /* ... existing code ... */
     if (_currentConversation.isGroupChat || widget.otherUser.id.isEmpty) return;
     showDialog(
       context: context,
       builder: (BuildContext dialogContext) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16.0),
-          ),
-          titlePadding: const EdgeInsets.all(0),
-          title: Stack(
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(top: 20.0, bottom: 10),
-                child: Center(
-                  child: UserAvatar(
-                    imageUrl: widget.otherUser.profilePictureUrl,
-                    userName: widget.otherUser.fullName,
-                    radius: 45,
-                    isActive: _isTargetUserOnline,
-                    borderWidth: 2.5,
-                  ),
-                ),
+        return StreamBuilder<List<String>>(
+          stream: socketService.activeUsersStream,
+          initialData: socketService.lastActiveUsers,
+          builder: (context, snapshot) {
+            final activeUserIds = snapshot.data ?? [];
+            final isUserOnline = activeUserIds.contains(widget.otherUser.id);
+
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16.0),
               ),
-              Positioned(
-                top: 0,
-                right: 0,
-                child: IconButton(
-                  icon: const Icon(Icons.close_rounded),
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  tooltip: "Close",
-                ),
-              ),
-            ],
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Text(
-                  widget.otherUser.fullName,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  widget.otherUser.email,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodyMedium?.copyWith(color: Colors.grey[700]),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.circle,
-                      size: 12,
-                      color:
-                          _isTargetUserOnline
-                              ? Colors.greenAccent[700]
-                              : Colors.grey[400],
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      _isTargetUserOnline ? 'Online' : 'Offline',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color:
-                            _isTargetUserOnline
-                                ? Colors.greenAccent[700]
-                                : Colors.grey[600],
-                        fontWeight: FontWeight.w500,
+              titlePadding: const EdgeInsets.all(0),
+              title: Stack(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 20.0, bottom: 10),
+                    child: Center(
+                      child: UserAvatar(
+                        imageUrl: widget.otherUser.profilePictureUrl,
+                        userName: widget.otherUser.fullName,
+                        radius: 45,
+                        isActive: isUserOnline,
+                        borderWidth: 2.5,
                       ),
+                    ),
+                  ),
+                  Positioned(
+                    top: 0,
+                    right: 0,
+                    child: IconButton(
+                      icon: const Icon(Icons.close_rounded),
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      tooltip: "Close",
+                    ),
+                  ),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Text(
+                      widget.otherUser.fullName,
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      widget.otherUser.email,
+                      style: Theme.of(
+                        context,
+                      ).textTheme.bodyMedium?.copyWith(color: Colors.grey[700]),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.circle,
+                          size: 12,
+                          color:
+                              isUserOnline
+                                  ? Colors.greenAccent[700]
+                                  : Colors.grey[400],
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          isUserOnline ? 'Online' : 'Offline',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color:
+                                isUserOnline
+                                    ? Colors.greenAccent[700]
+                                    : Colors.grey[600],
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
+              ),
+              actionsAlignment: MainAxisAlignment.center,
+              actions: <Widget>[
+                TextButton(
+                  child: const Text('OK', style: TextStyle(fontSize: 16)),
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                ),
               ],
-            ),
-          ),
-          actionsAlignment: MainAxisAlignment.center,
-          actions: <Widget>[
-            TextButton(
-              child: const Text('OK', style: TextStyle(fontSize: 16)),
-              onPressed: () => Navigator.of(dialogContext).pop(),
-            ),
-          ],
+            );
+          },
         );
       },
     );
   }
 
   Future<void> _confirmLeaveGroup() async {
-    /* ... existing code ... */
     final bool? confirm = await showDialog<bool>(
       context: context,
       builder:
@@ -1740,7 +1958,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           );
         }
       } catch (e) {
-        if (mounted)
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
@@ -1749,23 +1967,23 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               backgroundColor: Colors.red,
             ),
           );
+        }
       } finally {
-        if (mounted)
+        if (mounted) {
           setState(() {
             _isLeavingGroup = false;
           });
+        }
       }
     }
   }
 
-  // <<< NEW HELPER METHOD for date checking >>>
   bool _shouldShowDateSeparator(int currentIndex) {
     if (currentIndex == 0) {
-      return true; // Always show date for the first message
+      return true;
     }
     final previousMessage = _messages[currentIndex - 1];
     final currentMessage = _messages[currentIndex];
-    // Check if the day is different
     final previousDate = DateUtils.dateOnly(
       previousMessage.createdAt.toLocal(),
     );
@@ -1773,18 +1991,15 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     return !DateUtils.isSameDay(previousDate, currentDate);
   }
 
-  // <<< NEW HELPER for checking consecutive messages >>>
   bool _isConsecutiveMessage(int currentIndex) {
-    if (currentIndex == 0) return false; // First message is never consecutive
+    if (currentIndex == 0) return false;
     final previousMessage = _messages[currentIndex - 1];
     final currentMessage = _messages[currentIndex];
 
-    // Check if sender is the same and time difference is small (e.g., under a minute)
     if (previousMessage.sender == null || currentMessage.sender == null) {
-      return false; // System messages are never consecutive.
+      return false;
     }
 
-    // This part now only runs if both messages have a sender.
     return previousMessage.sender!.id == currentMessage.sender!.id &&
         currentMessage.createdAt
                 .difference(previousMessage.createdAt)
@@ -1792,38 +2007,31 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             1;
   }
 
-  // In lib/screens/chat_screen.dart -> inside _ChatScreenState
-
-  // This method builds the preview widget that appears above the text input field
   Widget _buildReplyPreview() {
-    // This will never be null when the widget is built, so we can use `!`
     final messageToReplyTo = _replyingToMessage!;
     final bool isReplyingToSelf =
         messageToReplyTo.sender?.id == _currentUser?.id;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      margin: const EdgeInsets.fromLTRB(10, 0, 10, 4), // Margin for spacing
+      margin: const EdgeInsets.fromLTRB(10, 0, 10, 4),
       decoration: BoxDecoration(
         color: Theme.of(context).primaryColor.withOpacity(0.08),
         borderRadius: const BorderRadius.only(
           topLeft: Radius.circular(12),
           topRight: Radius.circular(12),
         ),
-        // A colored left border to indicate a reply
         border: Border(
           left: BorderSide(color: Theme.of(context).primaryColor, width: 4),
         ),
       ),
       child: Row(
         children: [
-          // The main content of the preview
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  // Show "You" if replying to your own message
                   isReplyingToSelf
                       ? 'You'
                       : (messageToReplyTo.sender?.fullName ?? 'User'),
@@ -1834,7 +2042,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  // If it's a file message, show the file name. Otherwise, show text content.
                   (messageToReplyTo.fileUrl != null &&
                           messageToReplyTo.fileUrl!.isNotEmpty)
                       ? "📄 ${messageToReplyTo.fileName ?? "File"}"
@@ -1845,12 +2052,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               ],
             ),
           ),
-          // A close button to cancel the reply action
           IconButton(
             icon: const Icon(Icons.close, size: 20),
             onPressed: () {
               setState(() {
-                // Clear the reply state when the user taps close
                 _replyingToMessage = null;
               });
             },
@@ -1865,7 +2070,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     final bool isDeleted = message.deletedAt != null;
     final bool isHighlighted = _highlightedMessageId == message.id;
 
-    // This part that defines messageContent remains the same
     Widget messageContent = _buildTextBubble(
       message,
       isMe,
@@ -1879,7 +2083,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       );
     }
 
-    return AnimatedContainer(
+    Widget messageContainer = AnimatedContainer(
       duration: const Duration(milliseconds: 300),
       padding: isHighlighted ? const EdgeInsets.all(4.0) : EdgeInsets.zero,
       decoration: BoxDecoration(
@@ -1891,10 +2095,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       ),
       margin: EdgeInsets.only(
         top: isConsecutive ? 4.0 : 12.0,
-        bottom:
-            message.reactions.isNotEmpty
-                ? 16.0
-                : 4.0, // Add bottom margin if there are reactions
+        bottom: message.reactions.isNotEmpty ? 16.0 : 4.0,
         left: 16.0,
         right: 16.0,
       ),
@@ -1925,11 +2126,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                       style: TextStyle(fontSize: 12.0, color: Colors.grey[600]),
                     ),
                   ),
-
                 Stack(
                   clipBehavior: Clip.none,
                   children: [
-                    // The message bubble itself, with gestures for replying and reacting
                     GestureDetector(
                       onLongPress: () {
                         if (!isDeleted) _showReactionPicker(context, message);
@@ -1939,8 +2138,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                       },
                       child: messageContent,
                     ),
-
-                    // The reactions display, positioned relative to the bubble
                     if (message.reactions.isNotEmpty)
                       _buildReactionsDisplay(message, isMe),
                   ],
@@ -1951,9 +2148,28 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         ],
       ),
     );
-  }
 
-  // In lib/screens/chat_screen.dart -> inside _ChatScreenState
+    // Wrap the message container with Dismissible for swipe-to-reply
+    return Dismissible(
+      key: Key(message.id),
+      direction: DismissDirection.startToEnd,
+      confirmDismiss: (direction) async {
+        if (direction == DismissDirection.startToEnd) {
+          setState(() {
+            _replyingToMessage = message;
+          });
+        }
+        return false; // This prevents the widget from being dismissed
+      },
+      background: Container(
+        color: Theme.of(context).primaryColor.withOpacity(0.1),
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        alignment: Alignment.centerLeft,
+        child: Icon(Icons.reply, color: Theme.of(context).primaryColor),
+      ),
+      child: messageContainer,
+    );
+  }
 
   Widget _buildReplyPreviewWidget(Message message, bool isMe) {
     return GestureDetector(
@@ -1964,18 +2180,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         margin: const EdgeInsets.only(bottom: 4),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          // Use a slightly different color to distinguish the reply context from the main bubble
           color:
               isMe
                   ? Colors.white.withOpacity(0.2)
                   : Colors.black.withOpacity(0.05),
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(12),
-            topRight: Radius.circular(12),
-            bottomLeft: Radius.circular(12),
-            bottomRight: Radius.circular(12),
-          ),
-          // The colored left border is a common UI pattern for replies
+          borderRadius: const BorderRadius.all(Radius.circular(12)),
           border: Border(
             left: BorderSide(
               color:
@@ -1990,7 +2199,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              // Display the name of the person who sent the original message
               message.replySenderName ?? "User",
               style: TextStyle(
                 fontWeight: FontWeight.bold,
@@ -2003,10 +2211,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             ),
             const SizedBox(height: 2),
             Text(
-              // Display a snippet of the original message content or its file name
               (message.replySnippet != null && message.replySnippet!.isNotEmpty)
                   ? message.replySnippet!
-                  : "📄 File", // Fallback for file replies with no text
+                  : "📄 File",
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -2036,6 +2243,28 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     final bool isDeleted = message.deletedAt != null;
     final bool isHighlighted = _highlightedMessageId == message.id;
 
+    Widget _buildStatusIcon() {
+      IconData iconData;
+      Color iconColor;
+
+      switch (message.status) {
+        case 'read':
+          iconData = Icons.done_all_rounded;
+          iconColor = Colors.lightBlueAccent;
+          break;
+        case 'delivered':
+          iconData = Icons.done_all_rounded;
+          iconColor = Colors.white70;
+          break;
+        case 'sent':
+        default:
+          iconData = Icons.done_rounded;
+          iconColor = Colors.white70;
+          break;
+      }
+      return Icon(iconData, size: 16.0, color: iconColor);
+    }
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
       decoration: BoxDecoration(
@@ -2052,16 +2281,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                 : null,
       ),
       child: Stack(
-        // Use a Stack to layer content and timestamp
         children: [
-          // This Padding ensures the main text doesn't overlap with the timestamp
           Padding(
             padding: EdgeInsets.only(
-              right: 70, // Reserve space for time and icon
-              bottom:
-                  message.isEdited
-                      ? 15.0
-                      : 0.0, // Reserve space for "(edited)" text
+              right: 70,
+              bottom: message.isEdited ? 15.0 : 0.0,
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -2080,7 +2304,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               ],
             ),
           ),
-          // This Positioned widget holds the timestamp and read receipt
           Positioned(
             bottom: 0,
             right: 0,
@@ -2104,16 +2327,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                 ),
                 if (isMe && !isDeleted) ...[
                   const SizedBox(width: 5),
-                  Icon(
-                    message.status == 'read'
-                        ? Icons.done_all_rounded
-                        : Icons.done_all_rounded,
-                    size: 16.0,
-                    color:
-                        message.status == 'read'
-                            ? Colors.lightBlueAccent
-                            : Colors.white70,
-                  ),
+                  _buildStatusIcon(),
                 ],
               ],
             ),
@@ -2123,10 +2337,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
-  // In lib/screens/chat_screen.dart -> inside _ChatScreenState
-
-  // 1. This is the main method you'll call from your list builder.
-  // It decides which kind of bubble to build and handles the tap.
   Widget _buildFileBubble(
     Message message,
     bool isMe,
@@ -2137,19 +2347,16 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     final isPdf = fileType == 'application/pdf';
     final isAudio = fileType.startsWith('audio/');
 
-    // Decide what UI to show inside the bubble
     Widget fileContent;
     if (isImage) {
       fileContent = _buildImageContent(message, isMe);
     } else if (isAudio) {
-      // Handle audio files
       final fullAudioUrl = '$SERVER_ROOT_URL${message.fileUrl!}';
       fileContent = VoiceMessageBubble(audioUrl: fullAudioUrl, isMe: isMe);
     } else {
       fileContent = _buildGenericFileContent(message, isMe, isPdf);
     }
 
-    // Return the final bubble, wrapped in a container and a gesture detector
     return Container(
       width: MediaQuery.of(context).size.width * 0.65,
       decoration: BoxDecoration(
@@ -2159,7 +2366,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                 : Theme.of(context).cardColor,
         borderRadius: borderRadius,
       ),
-      // Use a ClipRRect to ensure the ripple effect from GestureDetector respects the bubble's border radius
       child: ClipRRect(
         borderRadius: borderRadius,
         child: GestureDetector(
@@ -2167,7 +2373,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             final fullFileUrl = '$SERVER_ROOT_URL${message.fileUrl!}';
 
             if (isImage) {
-              // Image viewing remains the same
               Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -2179,7 +2384,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                 ),
               );
             } else if (isPdf) {
-              // <<< MODIFIED: Navigate to the new Syncfusion viewer screen >>>
               Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -2191,8 +2395,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                 ),
               );
             } else {
-              // For other files, you can still use url_launcher if you want
-              // Or just show a message
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
                   content: Text("This file type can't be opened in the app."),
@@ -2203,15 +2405,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Conditionally add the reply preview widget if this is a reply
               if (message.replyTo != null)
                 Padding(
-                  // Add some padding to space it nicely inside the bubble
                   padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
                   child: _buildReplyPreviewWidget(message, isMe),
                 ),
-
-              // The file content (image or generic file) goes here
               fileContent,
             ],
           ),
@@ -2220,18 +2418,15 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
-  // 2. A helper method specifically for building the image bubble's content
   Widget _buildImageContent(Message message, bool isMe) {
     final fullImageUrl = '$SERVER_ROOT_URL${message.fileUrl!}';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // The Hero widget allows for the smooth animation to the full-screen view
         Hero(
-          tag: message.id, // Must be a unique tag
+          tag: message.id,
           child: ClipRRect(
-            // This ensures the image corners are rounded only at the top
             borderRadius: const BorderRadius.vertical(
               top: Radius.circular(18.0),
             ),
@@ -2239,10 +2434,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
               fullImageUrl,
               height: 200,
               fit: BoxFit.cover,
-              // Show a loading indicator while the image downloads
               loadingBuilder: (context, child, progress) {
                 if (progress == null) return child;
-                return Container(
+                return SizedBox(
                   height: 200,
                   child: Center(
                     child: CircularProgressIndicator(
@@ -2257,9 +2451,8 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   ),
                 );
               },
-              // Show an error icon if the image fails to load
               errorBuilder:
-                  (context, error, stack) => Container(
+                  (context, error, stack) => SizedBox(
                     height: 200,
                     child: Icon(
                       Icons.broken_image,
@@ -2270,7 +2463,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             ),
           ),
         ),
-        // Display the caption below the image if it exists
         if (message.content.isNotEmpty)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
@@ -2283,9 +2475,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
-  // 3. A helper method for building PDF and other file type bubbles
   Widget _buildGenericFileContent(Message message, bool isMe, bool isPdf) {
-    // Check if the current message's ID matches the one being downloaded
     final bool isDownloading = _downloadingFileId == message.id;
 
     return Column(
@@ -2295,8 +2485,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
           padding: const EdgeInsets.all(12),
           child: Row(
             children: [
-              // If this specific file is downloading, show a progress indicator.
-              // Otherwise, show the appropriate file icon.
               if (isDownloading)
                 Padding(
                   padding: const EdgeInsets.only(right: 8.0),
@@ -2337,7 +2525,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             ],
           ),
         ),
-        // Display the caption below the file info if it exists
         if (message.content.isNotEmpty)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
@@ -2351,27 +2538,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   }
 
   String _formatMessageTimestamp(DateTime dateTime) {
-    return DateFormat.jm().format(
-      dateTime.toLocal(),
-    ); // Only show time, e.g., 10:30 AM
+    return DateFormat.jm().format(dateTime.toLocal());
   }
 
-  String _formatDateTime(DateTime dateTime) {
-    /* ... existing code ... */
-    final now = DateTime.now();
-    final localDateTime = dateTime.toLocal();
-    if (now.year == localDateTime.year &&
-        now.month == localDateTime.month &&
-        now.day == localDateTime.day)
-      return DateFormat.jm().format(localDateTime);
-    if (now.year == localDateTime.year &&
-        now.month == localDateTime.month &&
-        now.day - localDateTime.day == 1)
-      return 'Yesterday ${DateFormat.jm().format(localDateTime)}';
-    return DateFormat('MMM d, hh:mm a').format(localDateTime);
-  }
-
-  // <<< NEW WIDGET for the date separator >>>
   Widget _DateSeparator(DateTime date) {
     String formattedDate;
     final now = DateUtils.dateOnly(DateTime.now());
@@ -2382,9 +2551,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     } else if (DateUtils.isSameDay(date, yesterday)) {
       formattedDate = 'Yesterday';
     } else if (now.year == date.year) {
-      formattedDate = DateFormat('MMMM d').format(date); // e.g., June 12
+      formattedDate = DateFormat('MMMM d').format(date);
     } else {
-      formattedDate = DateFormat('yMMMMd').format(date); // e.g., June 12, 2024
+      formattedDate = DateFormat('yMMMMd').format(date);
     }
 
     return Center(
@@ -2407,27 +2576,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
-  // In lib/screens/chat_screen.dart
-
   @override
   Widget build(BuildContext context) {
-    // This initial check is good.
-    if (_currentUser == null) {
-      return Scaffold(
-        body: Center(
-          child: Text(
-            "User not authenticated.",
-            style: TextStyle(color: Theme.of(context).colorScheme.error),
-          ),
-        ),
-      );
-    }
-
-    // This is the main screen layout
     return Scaffold(
-      backgroundColor: Colors.grey[100],
       appBar: AppBar(
-        // Use a conditional leading widget
         leading:
             _isSearching
                 ? IconButton(
@@ -2435,17 +2587,15 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   tooltip: 'Close Search',
                   onPressed: _toggleSearch,
                 )
-                : null, // Let Flutter handle the default back button
-        leadingWidth: _isSearching ? 56 : 30, // Adjust width for close icon
+                : null,
+        leadingWidth: _isSearching ? 56 : null,
         titleSpacing: 0,
-        // Conditionally show the search field or the default title
         title: _isSearching ? _buildSearchField() : _buildDefaultAppBarTitle(),
-        // Conditionally show search actions or default actions
         actions: _isSearching ? _buildSearchActions() : _buildDefaultActions(),
       ),
       body: Column(
         children: [
-          // 1. THE MESSAGE LIST
+          _buildConnectionStatusIndicator(),
           Expanded(
             child:
                 _isLoadingMessages
@@ -2466,144 +2616,159 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                     )
                     : _messages.isEmpty
                     ? const Center(child: Text("No messages yet. Say hello!"))
-                    : Column(
-                      children: [
-                        // Show loading indicator at the top when fetching more messages
-                        if (_isLoadingMore)
-                          const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 16.0),
-                            child: Center(child: CircularProgressIndicator()),
+                    : ListView.builder(
+                      controller: _scrollController,
+                      itemCount: _messages.length,
+                      itemBuilder: (context, index) {
+                        final message = _messages[index];
+                        final key = _messageKeys.putIfAbsent(
+                          message.id,
+                          () => GlobalKey(),
+                        );
+
+                        if (message.messageType == 'system') {
+                          return _buildSystemMessage(message.content);
+                        }
+
+                        final isConsecutive = _isConsecutiveMessage(index);
+                        final showDateSeparator = _shouldShowDateSeparator(
+                          index,
+                        );
+                        final messageWidget = _buildMessageItem(
+                          message,
+                          isConsecutive,
+                        );
+
+                        return KeyedSubtree(
+                          key: key,
+                          child: Column(
+                            children: [
+                              if (showDateSeparator)
+                                _DateSeparator(message.createdAt.toLocal()),
+                              messageWidget,
+                            ],
                           ),
-                        Expanded(
-                          child: AnimatedList(
-                            key: _listKey,
-                            controller: _scrollController,
-                            reverse: false,
-                            padding: const EdgeInsets.symmetric(vertical: 10.0),
-                            // Use a special item count to account for the potential loading indicator
-                            initialItemCount: _messages.length,
-                            itemBuilder: (context, index, animation) {
-                              // The rest of your itemBuilder logic remains exactly the same
-                              final message = _messages[index];
-                              final key = _messageKeys.putIfAbsent(
-                                message.id,
-                                () => GlobalKey(),
-                              );
-
-                              if (message.messageType == 'system') {
-                                return _buildSystemMessage(message.content);
-                              }
-
-                              final isConsecutive = _isConsecutiveMessage(
-                                index,
-                              );
-                              final showDateSeparator =
-                                  _shouldShowDateSeparator(index);
-                              final messageWidget = _buildMessageItem(
-                                message,
-                                isConsecutive,
-                              );
-
-                              return KeyedSubtree(
-                                key: key,
-                                child: Column(
-                                  children: [
-                                    if (showDateSeparator)
-                                      _DateSeparator(
-                                        message.createdAt.toLocal(),
-                                      ),
-                                    FadeTransition(
-                                      opacity: animation,
-                                      child: messageWidget,
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ],
+                        );
+                      },
                     ),
           ),
-
-          // 2. THE REPLY PREVIEW WIDGET (Conditional)
-          // This is the correct location. It will only show up when you swipe to reply.
           if (_replyingToMessage != null) _buildReplyPreview(),
-
-          // 3. THE MESSAGE INPUT WIDGET
           _buildMessageInput(),
         ],
       ),
     );
   }
 
-  // Create these helper methods to build parts of the AppBar
-
-  // Builds the default title when not searching
   Widget _buildDefaultAppBarTitle() {
-    return GestureDetector(
-      onTap:
-          isGroupChat
-              ? () => _showGroupMembers(context)
-              : (widget.otherUser.id.isNotEmpty
-                  ? () => _showOtherUserDetails(context)
-                  : null),
-      child: Row(
-        children: [
-          UserAvatar(
-            imageUrl: appBarAvatarUrl,
-            userName: appBarTitle,
-            radius: 18,
-            isActive: isGroupChat ? false : _isTargetUserOnline,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  appBarTitle,
-                  style: const TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                if (!isGroupChat && _isOtherUserTyping)
-                  const Text(
-                    'typing...',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontStyle: FontStyle.italic,
-                      color: Colors.white70,
+    return StreamBuilder<List<String>>(
+      stream: socketService.activeUsersStream,
+      initialData: socketService.lastActiveUsers,
+      builder: (context, snapshot) {
+        final activeUserIds = snapshot.data ?? [];
+        final isUserOnline = activeUserIds.contains(widget.otherUser.id);
+
+        return GestureDetector(
+          onTap:
+              isGroupChat
+                  ? () => _showGroupMembers(context)
+                  : (widget.otherUser.id.isNotEmpty
+                      ? () => _showOtherUserDetails(context)
+                      : null),
+          child: Row(
+            children: [
+              UserAvatar(
+                imageUrl: appBarAvatarUrl,
+                userName: appBarTitle,
+                radius: 18,
+                isActive: isGroupChat ? false : isUserOnline,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      appBarTitle,
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
                     ),
-                  )
-                else if (!isGroupChat && _isTargetUserOnline)
-                  const Text(
-                    'Online',
-                    style: TextStyle(fontSize: 12, color: Colors.white70),
-                  )
-                else if (!isGroupChat)
-                  Text(
-                    // Use the formatter here
-                    _formatLastSeen(widget.otherUser.lastSeen),
-                    style: const TextStyle(fontSize: 12, color: Colors.white54),
-                  )
-                else if (isGroupChat)
-                  Text(
-                    '${_currentConversation.participants.length} members',
-                    style: const TextStyle(fontSize: 12, color: Colors.white70),
-                  ),
-              ],
-            ),
+                    if (!isGroupChat && _isOtherUserTyping)
+                      const Text(
+                        'typing...',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontStyle: FontStyle.italic,
+                          color: Colors.white70,
+                        ),
+                      )
+                    else if (!isGroupChat && isUserOnline)
+                      const Text(
+                        'Online',
+                        style: TextStyle(fontSize: 12, color: Colors.white70),
+                      )
+                    else if (!isGroupChat)
+                      Text(
+                        _formatLastSeen(widget.otherUser.lastSeen),
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.white54,
+                        ),
+                      )
+                    else if (isGroupChat)
+                      Text(
+                        '${_currentConversation.participants.length} members',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.white70,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
-  // Builds the default actions when not searching
+  Widget _buildConnectionStatusIndicator() {
+    return StreamBuilder<SocketStatus>(
+      stream: socketService.connectionStatusStream,
+      initialData: socketService.lastStatus,
+      builder: (context, snapshot) {
+        // If the status is online, show nothing.
+        if (snapshot.data == SocketStatus.online) {
+          return const SizedBox.shrink();
+        }
+
+        // For any other status (connecting, offline), show the "Offline" banner.
+        return Material(
+          child: Container(
+            width: double.infinity,
+            color: Colors.grey[600]!, // Offline color
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 16),
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.wifi_off, size: 14, color: Colors.white),
+                SizedBox(width: 8),
+                Text(
+                  'Offline. Check your connection.',
+                  style: TextStyle(color: Colors.white, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   List<Widget> _buildDefaultActions() {
     return [
       IconButton(
@@ -2611,17 +2776,15 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         tooltip: 'Search Messages',
         onPressed: _toggleSearch,
       ),
-      // You can add other actions like a video call button here if needed
     ];
   }
 
-  // Builds the text input field for the search bar
   Widget _buildSearchField() {
     return TextField(
       controller: _searchController,
       autofocus: true,
-      style: const TextStyle(color: Color.fromARGB(255, 0, 0, 0), fontSize: 17),
-      cursorColor: const Color.fromARGB(255, 0, 0, 0),
+      style: const TextStyle(color: Colors.white, fontSize: 17),
+      cursorColor: Colors.white,
       decoration: const InputDecoration(
         hintText: 'Search messages...',
         hintStyle: TextStyle(color: Colors.white70),
@@ -2631,7 +2794,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
-  // Builds the up/down navigation actions for search results
   List<Widget> _buildSearchActions() {
     return [
       if (_isSearchLoading)
@@ -2694,11 +2856,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
-  // Add inside _ChatScreenState
-
-  // Widget to display the reactions at the bottom of a message
-  // In _ChatScreenState
-
   Widget _buildReactionsDisplay(Message message, bool isMe) {
     if (message.reactions.isEmpty) {
       return const SizedBox.shrink();
@@ -2709,7 +2866,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       groupedReactions.putIfAbsent(reaction.emoji, () => []).add(reaction);
     }
 
-    // GestureDetector now wraps the Positioned widget
     return Positioned(
       bottom: -22,
       right: isMe ? 4 : null,
@@ -2718,7 +2874,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         onTap: () {
           _showReactionsBottomSheet(context, message);
         },
-
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
@@ -2738,7 +2893,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                 groupedReactions.entries.map((entry) {
                   return Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 3.0),
-
                     child: IgnorePointer(
                       child: Text('${entry.key} ${entry.value.length}'),
                     ),
@@ -2756,7 +2910,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       groupedReactions.putIfAbsent(reaction.emoji, () => []).add(reaction);
     }
     final emojis = groupedReactions.keys.toList();
-    final allReactions = message.reactions; // Get a list of all reactions
+    final allReactions = message.reactions;
 
     showModalBottomSheet(
       context: context,
@@ -2764,26 +2918,20 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20.0)),
       ),
       builder: (BuildContext context) {
-        // Use DefaultTabController to manage the tabs
         return DefaultTabController(
-          // Length is now number of emojis + 1 for the "All" tab
           length: emojis.length + 1,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // TabBar to show the different emoji reactions
               TabBar(
-                isScrollable: true, // Allows tabs to scroll if there are many
+                isScrollable: true,
                 tabs: [
-                  // 1. The new "All" tab is added here
                   Tab(
                     child: Text(
                       'All ${allReactions.length}',
                       style: const TextStyle(fontSize: 16),
                     ),
                   ),
-
-                  // 2. The rest of the emoji tabs are generated as before
                   ...emojis.map(
                     (emoji) => Tab(
                       child: Text(
@@ -2794,13 +2942,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                   ),
                 ],
               ),
-              // TabBarView to show the list of users for each emoji
               SizedBox(
-                // Constrain the height of the content
                 height: MediaQuery.of(context).size.height * 0.3,
                 child: TabBarView(
                   children: [
-                    // 1. The ListView for the "All" tab
                     ListView.builder(
                       itemCount: allReactions.length,
                       itemBuilder: (context, index) {
@@ -2808,11 +2953,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                         return ListTile(
                           leading: UserAvatar(
                             userName: reaction.userName,
-                            // In a future step, you could fetch user avatars here
                             radius: 18,
                           ),
                           title: Text(reaction.userName),
-                          // Show the emoji they reacted with
                           trailing: Text(
                             reaction.emoji,
                             style: const TextStyle(fontSize: 24),
@@ -2820,8 +2963,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                         );
                       },
                     ),
-
-                    // 2. The rest of the emoji-specific views
                     ...emojis.map((emoji) {
                       final reactors = groupedReactions[emoji]!;
                       return ListView.builder(
@@ -2848,11 +2989,9 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     );
   }
 
-  // Shows the emoji picker when a user long-presses a message
   void _showReactionPicker(BuildContext context, Message message) {
     final List<String> commonEmojis = ['❤️', '😂', '👍', '😢', '😮', '🙏'];
 
-    // 1. Find the current user's existing reaction, if any.
     final currentUserId = authService.currentUser?.id;
     Reaction? currentUserReaction;
     try {
@@ -2860,7 +2999,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         (r) => r.userId == currentUserId,
       );
     } catch (e) {
-      // This is normal, it just means the user hasn't reacted yet.
       currentUserReaction = null;
     }
 
@@ -2878,7 +3016,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children:
                 commonEmojis.map((emoji) {
-                  // 2. Check if the current emoji is the one selected by the user.
                   final bool isSelected = currentUserReaction?.emoji == emoji;
 
                   return InkWell(
@@ -2890,7 +3027,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                       );
                       Navigator.of(context).pop();
                     },
-                    // 3. Apply a highlight based on the `isSelected` flag.
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 200),
                       padding: const EdgeInsets.all(8.0),
@@ -2914,7 +3050,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildMessageInput() {
-    // Check if the text field has any text to determine which icon to show
     final bool hasText = _messageController.text.trim().isNotEmpty;
 
     return Container(
@@ -2932,7 +3067,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            // Attachment Button (remains the same)
             Padding(
               padding: const EdgeInsets.only(bottom: 4.0, left: 4.0),
               child: IconButton(
@@ -2950,8 +3084,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                 onPressed: _isUploadingFile ? null : _pickAndSendFile,
               ),
             ),
-
-            // Expanded section for Text Field or Recording Indicator
             Expanded(
               child:
                   _isRecording
@@ -3007,10 +3139,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                       ),
             ),
             const SizedBox(width: 8),
-
-            // Send / Microphone Button
             GestureDetector(
-              // Use onLongPress for recording voice notes
               onLongPress: hasText || _isRecording ? null : _startRecording,
               onLongPressUp: hasText || !_isRecording ? null : _stopRecording,
               child: Material(
@@ -3018,12 +3147,10 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
                 borderRadius: BorderRadius.circular(25),
                 child: InkWell(
                   borderRadius: BorderRadius.circular(25),
-                  // Regular tap only works for sending text
                   onTap: hasText ? _sendMessage : null,
                   child: Padding(
                     padding: const EdgeInsets.all(12.0),
                     child: Icon(
-                      // Switch icon based on whether there is text
                       hasText ? Icons.send_rounded : Icons.mic_none_rounded,
                       color: Colors.white,
                       size: 24,

@@ -6,13 +6,16 @@ import 'screens/home_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/user_list_screen.dart';
 import 'screens/select_group_members_screen.dart';
-// import 'screens/create_group_details_screen.dart';
-// import 'screens/chat_screen.dart';
 import 'services/token_storage_service.dart';
 import 'services/services_locator.dart';
+import 'services/cache_service.dart'; // <-- ADDED: Import for Cache Service
 
 Future<void> mainApp() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // --- ADDED: Initialize the local database (Hive) ---
+  await CacheService.init();
+
   final TokenStorageService tokenStorageService = TokenStorageService();
   String? token = await tokenStorageService.getToken();
 
@@ -200,9 +203,6 @@ class MyApp extends StatelessWidget {
         UserListScreen.routeName: (context) => const UserListScreen(),
         SelectGroupMembersScreen.routeName:
             (context) => const SelectGroupMembersScreen(), // <<< Added route
-        // CreateGroupDetailsScreen is typically navigated to directly with arguments (using MaterialPageRoute)
-        // rather than by a named route, because it requires the 'selectedMembers' list.
-        // If you were to use named routes for it, you'd need to handle argument passing via settings in onGenerateRoute.
       },
       debugShowCheckedModeBanner: false,
     );
