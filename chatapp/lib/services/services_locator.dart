@@ -3,6 +3,8 @@ import 'auth_service.dart';
 import 'socket_service.dart';
 import 'user_services.dart';
 import 'chat_service.dart';
+// ADD THIS IMPORT
+import 'biometric_service.dart';
 
 // Global instances - for simplicity in this example.
 // Consider using a proper DI/Service Locator package for larger apps (GetIt, Provider, Riverpod).
@@ -13,6 +15,8 @@ final UserService userService = UserService();
 // SocketService needs AuthService to get the current user ID for connection.
 final SocketService socketService = SocketService(authService);
 final ChatService chatService = ChatService();
+// ADD THIS LINE: Instantiate the new service
+final BiometricService biometricService = BiometricService();
 
 // Call this function in main.dart after user logs in or on app start if token exists.
 Future<void> initializeServicesOnLogin() async {
@@ -41,6 +45,8 @@ Future<void> initializeServicesOnLogin() async {
 void disconnectServicesOnLogout() {
   print("ServiceLocator: disconnectServicesOnLogout called.");
   socketService.disconnect();
+  // ADD THIS LINE: Clear saved credentials on logout
+  biometricService.deleteCredentials();
   // You might also want to clear other service states here if necessary.
   // authService.logout() already clears its own _currentUser.
 }

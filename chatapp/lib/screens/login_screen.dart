@@ -1,12 +1,15 @@
 // lib/screens/login_screen.dart
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import '../services/services_locator.dart'; // Import service_locator
+import '../services/services_locator.dart';
 import 'signup_screen.dart';
 import 'home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
   static const String routeName = '/login';
+
   @override
   State<LoginScreen> createState() => _LoginScreenState();
 }
@@ -17,6 +20,14 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passwordController = TextEditingController();
   bool _isLoading = false;
   String? _errorMessage;
+  bool _canUseBiometrics = false;
+  bool _isCheckingBiometrics = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkBiometricsOnStartup();
+  }
 
   @override
   void dispose() {
@@ -25,63 +36,98 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  Future<void> _loginUser() async {
-    if (_formKey.currentState!.validate()) {
-      setState(() {
-        _isLoading = true;
-        _errorMessage = null;
-      });
+  Future<void> _checkBiometricsOnStartup() async {
+    try {
+      final bool canAuthenticate = await biometricService.canAuthenticate();
+      final credentials = await biometricService.getSavedCredentials();
+      if (mounted) {
+        setState(() {
+          _canUseBiometrics = canAuthenticate && (credentials != null);
+          _isCheckingBiometrics = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isCheckingBiometrics = false);
+      }
+    }
+  }
 
+  Future<void> _handleBiometricLogin() async {
+    try {
+      setState(() => _isLoading = true);
+
+      final isAuthenticated = await biometricService.authenticate(
+        'Log in using your fingerprint',
+      );
+      if (!isAuthenticated) return;
+
+      final credentials = await biometricService.getSavedCredentials();
+      if (credentials == null) {
+        throw Exception("No saved credentials found");
+      }
+
+      final result = await authService.login(
+        email: credentials['email']!,
+        password: credentials['password']!,
+      );
+
+      if (!result['success']) {
+        throw Exception(result['message'] ?? "Biometric login failed");
+      }
+
+      // Initialize services without waiting for socket
+      unawaited(initializeServicesOnLogin());
+
+      if (mounted) {
+        Navigator.of(context).pushReplacementNamed(HomeScreen.routeName);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = "Biometric login failed. Use password.";
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_errorMessage!), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _loginUser() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
       final result = await authService.login(
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
       );
 
+      if (!result['success']) {
+        throw Exception(result['message'] ?? 'Login failed');
+      }
+
+      // Initialize services without waiting for socket
+      unawaited(initializeServicesOnLogin());
+
+      if (mounted) {
+        Navigator.of(context).pushReplacementNamed(HomeScreen.routeName);
+      }
+    } catch (e) {
       if (mounted) {
         setState(() {
           _isLoading = false;
+          _errorMessage = e.toString().replaceFirst("Exception: ", "");
         });
-
-        if (result['success']) {
-          if (authService.currentUser != null) {
-            print(
-              "LoginScreen: Login successful, currentUser is ${authService.currentUser!.fullName}. Initializing services.",
-            );
-            await initializeServicesOnLogin(); // Ensure this is awaited if it has async operations for setup
-          } else {
-            print(
-              "LoginScreen: Login successful, BUT currentUser is NULL in authService. This is unexpected.",
-            );
-            setState(() {
-              _errorMessage =
-                  "Login succeeded but user data is missing. Please contact support.";
-            });
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(_errorMessage!),
-                backgroundColor: Colors.orange,
-              ),
-            );
-            return;
-          }
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(result['data']['message'] ?? 'Login Successful!'),
-              backgroundColor: Colors.green,
-            ),
-          );
-          Navigator.of(context).pushReplacementNamed(HomeScreen.routeName);
-        } else {
-          setState(() {
-            _errorMessage = result['message'];
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(_errorMessage ?? 'Login failed.'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(_errorMessage!), backgroundColor: Colors.red),
+        );
       }
     }
   }
@@ -129,12 +175,14 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   keyboardType: TextInputType.emailAddress,
                   validator: (value) {
-                    if (value == null || value.isEmpty)
+                    if (value == null || value.isEmpty) {
                       return 'Please enter your email';
+                    }
                     if (!RegExp(
                       r"^[a-zA-Z0-9.a-zA-Z0-9.!#$%&'*+-/=?^_`{|}~]+@[a-zA-Z0-9]+\.[a-zA-Z]+",
-                    ).hasMatch(value))
+                    ).hasMatch(value)) {
                       return 'Please enter a valid email';
+                    }
                     return null;
                   },
                 ),
@@ -148,18 +196,45 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   obscureText: true,
                   validator: (value) {
-                    if (value == null || value.isEmpty)
+                    if (value == null || value.isEmpty) {
                       return 'Please enter your password';
+                    }
                     return null;
                   },
                 ),
                 const SizedBox(height: 30),
-                _isLoading
-                    ? const Center(child: CircularProgressIndicator())
-                    : ElevatedButton(
-                      onPressed: _loginUser,
-                      child: const Text('Login'),
-                    ),
+                if (_isLoading)
+                  const Center(child: CircularProgressIndicator())
+                else
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: _loginUser,
+                          child: const Text('Login'),
+                        ),
+                      ),
+                      if (_canUseBiometrics) ...[
+                        const SizedBox(width: 16),
+                        IconButton(
+                          icon: Icon(
+                            Icons.fingerprint,
+                            color: Theme.of(context).primaryColor,
+                            size: 36,
+                          ),
+                          onPressed: _handleBiometricLogin,
+                          tooltip: 'Login with Fingerprint',
+                        ),
+                      ] else if (_isCheckingBiometrics) ...[
+                        const SizedBox(width: 16),
+                        const SizedBox(
+                          width: 36,
+                          height: 36,
+                          child: CircularProgressIndicator(strokeWidth: 2.5),
+                        ),
+                      ],
+                    ],
+                  ),
                 const SizedBox(height: 20),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,

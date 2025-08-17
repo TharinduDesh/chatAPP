@@ -30,6 +30,8 @@
 	<string>Main</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>This app requires access to the microphone to record voice messages.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Why is my app authenticating using face id?</string>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

@@ -11,6 +11,7 @@ import 'login_screen.dart';
 import 'profile_screen.dart';
 import 'user_list_screen.dart';
 import 'chat_screen.dart';
+import 'settings_screen.dart';
 import '../widgets/user_avatar.dart';
 import '../services/crypto_service.dart';
 import '../services/cache_service.dart';
@@ -645,6 +646,12 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('My Chats'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Settings',
+            onPressed:
+                () => Navigator.of(context).pushNamed(SettingsScreen.routeName),
+          ),
           IconButton(
             icon: const Icon(Icons.account_circle_outlined),
             tooltip: 'My Profile',

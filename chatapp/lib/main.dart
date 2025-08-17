@@ -4,6 +4,7 @@ import 'screens/login_screen.dart';
 import 'screens/signup_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/profile_screen.dart';
+import 'screens/settings_screen.dart';
 import 'screens/user_list_screen.dart';
 import 'screens/select_group_members_screen.dart';
 import 'services/token_storage_service.dart';
@@ -201,6 +202,7 @@ class MyApp extends StatelessWidget {
         HomeScreen.routeName: (context) => const HomeScreen(),
         ProfileScreen.routeName: (context) => const ProfileScreen(),
         UserListScreen.routeName: (context) => const UserListScreen(),
+        SettingsScreen.routeName: (context) => const SettingsScreen(),
         SelectGroupMembersScreen.routeName:
             (context) => const SelectGroupMembersScreen(), // <<< Added route
       },
