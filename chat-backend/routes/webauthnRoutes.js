@@ -35,8 +35,8 @@ router.post("/register-options", async (req, res) => {
       userName: user.email,
       attestationType: "none",
       excludeCredentials: userAuthenticators.map((auth) => ({
-        // FIX: Convert string ID from DB back to a Buffer for the browser
-        id: Buffer.from(auth.credentialID, "base64url"),
+        // Pass the raw string from the DB to avoid library validation issues
+        id: auth.credentialID,
         type: "public-key",
         transports: auth.transports,
       })),
@@ -125,27 +125,13 @@ router.post("/verify-registration", async (req, res) => {
 
 // [POST] /api/webauthn/auth-options
 router.post("/auth-options", async (req, res) => {
-  const { email } = req.body;
-  if (!email) {
-    return res.status(400).json({ message: "Email is required" });
-  }
-
   try {
-    const user = await Admin.findOne({ email });
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    const userAuthenticators = await Authenticator.find({ userId: user._id });
-
+    // --- THE DEFINITIVE FIX ---
+    // We will NOT provide an allowCredentials list.
+    // This forces the browser to use "discoverable credentials" (passkeys)
+    // which is the modern, correct flow and avoids all the server-side bugs.
     const options = await generateAuthenticationOptions({
       rpID,
-      allowCredentials: userAuthenticators.map((auth) => ({
-        // FIX: Convert string ID from DB back to a Buffer for the browser
-        id: Buffer.from(auth.credentialID, "base64url"),
-        type: "public-key",
-        transports: auth.transports,
-      })),
       userVerification: "preferred",
     });
 
@@ -177,9 +163,19 @@ router.post("/verify-authentication", async (req, res) => {
         .json({ message: "Challenge not found or expired" });
     }
 
+    // Since this is a discoverable credential, the user ID is part of the response
+    const userHandle = cred.response.userHandle;
+    if (!userHandle) {
+      return res
+        .status(400)
+        .json({ message: "User handle not found in response." });
+    }
+
     const authenticator = await Authenticator.findOne({
       credentialID: cred.id,
+      userId: userHandle, // Verify the user ID matches the authenticator
     });
+
     if (!authenticator) {
       return res.status(404).json({ message: "Authenticator not found" });
     }
