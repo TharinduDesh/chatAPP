@@ -35,8 +35,7 @@ router.post("/register-options", async (req, res) => {
       userName: user.email,
       attestationType: "none",
       excludeCredentials: userAuthenticators.map((auth) => ({
-        // --- FIX: Pass the raw string from the DB ---
-        id: auth.credentialID,
+        id: Buffer.from(auth.credentialID, "base64url"),
         type: "public-key",
         transports: auth.transports,
       })),
@@ -150,8 +149,8 @@ router.post("/auth-options", async (req, res) => {
     const options = await generateAuthenticationOptions({
       rpID,
       allowCredentials: userAuthenticators.map((auth) => ({
-        // --- FIX: Pass the raw string from the DB ---
-        id: auth.credentialID,
+        // --- THE FIX: Convert the string ID from DB back to a Buffer ---
+        id: Buffer.from(auth.credentialID, "base64url"),
         type: "public-key",
         transports: auth.transports,
       })),
