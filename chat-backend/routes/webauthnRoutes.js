@@ -39,9 +39,10 @@ router.post("/register-options", async (req, res) => {
         type: "public-key",
         transports: auth.transports,
       })),
+      // --- THE FIX: Revert to preferring a synced Google Account Passkey ---
       authenticatorSelection: {
         authenticatorAttachment: "platform",
-        requireResidentKey: false,
+        residentKey: "preferred", // This enables the Google Sync prompt
         userVerification: "required",
       },
     });
@@ -79,26 +80,13 @@ router.post("/verify-registration", async (req, res) => {
         .json({ message: "Challenge not found or expired" });
     }
 
-    let verification;
-    try {
-      verification = await verifyRegistrationResponse({
-        response: cred,
-        expectedChallenge: challengeFromResponse,
-        expectedOrigin: origin,
-        expectedRPID: rpID,
-        requireUserVerification: false,
-      });
-    } catch (error) {
-      console.error("Verification library threw an error:", error);
-      return res
-        .status(400)
-        .json({ message: `Verification error: ${error.message}` });
-    }
-
-    console.log(
-      "Full verification object:",
-      JSON.stringify(verification, null, 2)
-    );
+    const verification = await verifyRegistrationResponse({
+      response: cred,
+      expectedChallenge: challengeFromResponse,
+      expectedOrigin: origin,
+      expectedRPID: rpID,
+      requireUserVerification: false,
+    });
 
     if (verification.verified && verification.registrationInfo) {
       const { registrationInfo } = verification;
