@@ -109,8 +109,8 @@ router.post("/verify-registration", async (req, res) => {
         credentialPublicKey: Buffer.from(credential.publicKey).toString(
           "base64url"
         ),
-        counter: registrationInfo.counter,
-        // --- THE FIX: Use the correct property to get transport info ---
+        // --- THE FIX: Default to 0 if the counter is missing ---
+        counter: registrationInfo.counter || 0,
         transports: [registrationInfo.credentialDeviceType],
       });
       await newAuthenticator.save();
