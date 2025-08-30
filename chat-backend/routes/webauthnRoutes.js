@@ -86,6 +86,7 @@ router.post("/verify-registration", async (req, res) => {
       requireUserVerification: false,
     });
 
+    // In /verify-registration endpoint
     if (verification.verified && verification.registrationInfo) {
       const { registrationInfo } = verification;
 
@@ -96,14 +97,17 @@ router.post("/verify-registration", async (req, res) => {
         });
       }
 
+      // Make sure credential ID is stored as base64url string
+      const credentialID = Buffer.from(credential.id).toString("base64url");
+
       const newAuthenticator = new Authenticator({
         userId,
-        credentialID: credential.id,
+        credentialID: credentialID, // Store as base64url string
         credentialPublicKey: Buffer.from(credential.publicKey).toString(
           "base64url"
         ),
         counter: registrationInfo.counter || 0,
-        transports: ["internal"],
+        transports: cred.transports || ["internal"],
       });
       await newAuthenticator.save();
     } else {
