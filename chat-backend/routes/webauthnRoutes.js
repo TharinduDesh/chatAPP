@@ -35,8 +35,8 @@ router.post("/register-options", async (req, res) => {
       userName: user.email,
       attestationType: "none",
       excludeCredentials: userAuthenticators.map((auth) => ({
-        // FIX: Convert string ID from DB back to a Buffer for the browser
-        id: Buffer.from(auth.credentialID, "base64url"),
+        // Pass the raw string from the DB for this function's validation
+        id: auth.credentialID,
         type: "public-key",
         transports: auth.transports,
       })),
@@ -142,8 +142,8 @@ router.post("/auth-options", async (req, res) => {
     const options = await generateAuthenticationOptions({
       rpID,
       allowCredentials: userAuthenticators.map((auth) => ({
-        // FIX: Convert string ID from DB back to a Buffer for the browser
-        id: Buffer.from(auth.credentialID, "base64url"),
+        // --- THE FIX: Pass the raw string from the DB for this function's validation ---
+        id: auth.credentialID,
         type: "public-key",
         transports: auth.transports,
       })),
@@ -191,6 +191,7 @@ router.post("/verify-authentication", async (req, res) => {
       expectedOrigin: origin,
       expectedRPID: rpID,
       authenticator: {
+        // This function correctly requires Buffers, so we keep the conversion here
         credentialID: Buffer.from(authenticator.credentialID, "base64url"),
         credentialPublicKey: Buffer.from(
           authenticator.credentialPublicKey,
