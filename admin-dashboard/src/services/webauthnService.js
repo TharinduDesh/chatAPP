@@ -37,7 +37,7 @@ export const loginWithBiometrics = async (email) => {
     const cred = await startAuthentication(optionsResponse.data);
     const verificationResponse = await webauthnApi.post(
       "/verify-authentication",
-      { cred, email } // Include email in the verification request
+      { cred }
     );
     return verificationResponse.data;
   } catch (error) {

@@ -86,7 +86,6 @@ router.post("/verify-registration", async (req, res) => {
       requireUserVerification: false,
     });
 
-    // In /verify-registration endpoint
     if (verification.verified && verification.registrationInfo) {
       const { registrationInfo } = verification;
 
@@ -97,17 +96,14 @@ router.post("/verify-registration", async (req, res) => {
         });
       }
 
-      // Make sure credential ID is stored as base64url string
-      const credentialID = Buffer.from(credential.id).toString("base64url");
-
       const newAuthenticator = new Authenticator({
         userId,
-        credentialID: credentialID, // Store as base64url string
+        credentialID: credential.id,
         credentialPublicKey: Buffer.from(credential.publicKey).toString(
           "base64url"
         ),
         counter: registrationInfo.counter || 0,
-        transports: cred.transports || ["internal"],
+        transports: ["internal"],
       });
       await newAuthenticator.save();
     } else {
@@ -126,23 +122,9 @@ router.post("/verify-registration", async (req, res) => {
 
 // [POST] /api/webauthn/auth-options
 router.post("/auth-options", async (req, res) => {
-  const { email } = req.body; // Get email from request
-
   try {
-    const user = await Admin.findOne({ email });
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    const userAuthenticators = await Authenticator.find({ userId: user._id });
-
     const options = await generateAuthenticationOptions({
       rpID,
-      allowCredentials: userAuthenticators.map((auth) => ({
-        id: auth.credentialID, // Use the stored credential ID directly (already base64url)
-        type: "public-key",
-        transports: auth.transports,
-      })),
       userVerification: "preferred",
     });
 
@@ -156,7 +138,7 @@ router.post("/auth-options", async (req, res) => {
 
 // [POST] /api/webauthn/verify-authentication
 router.post("/verify-authentication", async (req, res) => {
-  const { cred, email } = req.body; // Add email to the request
+  const { cred } = req.body;
 
   try {
     const clientDataJSON = Buffer.from(
@@ -174,16 +156,8 @@ router.post("/verify-authentication", async (req, res) => {
         .json({ message: "Challenge not found or expired" });
     }
 
-    // Find user by email first
-    const user = await Admin.findOne({ email });
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    // Find authenticator by user ID and credential ID
     const authenticator = await Authenticator.findOne({
-      userId: user._id,
-      credentialID: cred.id, // Use the credential ID directly
+      credentialID: cred.id,
     });
 
     if (!authenticator) {
@@ -192,12 +166,6 @@ router.post("/verify-authentication", async (req, res) => {
       });
     }
 
-    // Convert stored public key back to Buffer
-    const credentialPublicKey = Buffer.from(
-      authenticator.credentialPublicKey,
-      "base64url"
-    );
-
     const verification = await verifyAuthenticationResponse({
       response: cred,
       expectedChallenge: challengeFromResponse,
@@ -205,8 +173,12 @@ router.post("/verify-authentication", async (req, res) => {
       expectedRPID: rpID,
       authenticator: {
         credentialID: Buffer.from(authenticator.credentialID, "base64url"),
-        credentialPublicKey: credentialPublicKey,
+        credentialPublicKey: Buffer.from(
+          authenticator.credentialPublicKey,
+          "base64url"
+        ),
         counter: authenticator.counter,
+        // --- THE DEFINITIVE FIX: Add the transports property back in ---
         transports: authenticator.transports,
       },
       requireUserVerification: false,
@@ -215,14 +187,10 @@ router.post("/verify-authentication", async (req, res) => {
     if (verification.verified) {
       authenticator.counter = verification.authenticationInfo.newCounter;
       await authenticator.save();
-
-      // Return user ID for session creation
-      res.json({ verified: true, userId: user._id });
-    } else {
-      res.json({ verified: false });
     }
 
     await expectedChallenge.deleteOne();
+    res.json({ verified: verification.verified });
   } catch (error) {
     console.error(`Error in /verify-authentication:`, error);
     res.status(500).json({ message: "Server error" });

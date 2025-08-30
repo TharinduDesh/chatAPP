@@ -35,16 +35,14 @@ const LoginPage = () => {
       return;
     }
     try {
-      const { verified, userId } = await loginWithBiometrics(email);
+      // We now pass the email as the username
+      const { verified } = await loginWithBiometrics(email);
       if (verified) {
-        // Create a session or token for the user
-        // You might need to call your auth service to create a session
+        // After successful verification, we need a way to get the auth token.
+        // For simplicity, we'll call the regular login endpoint again,
+        // but in a real app, you might have a dedicated endpoint for this.
+        await login(email, null, true); // Pass a flag indicating biometric login
         alert("Biometric login successful!");
-
-        // Store authentication state (simplified example)
-        localStorage.setItem("isAuthenticated", "true");
-        localStorage.setItem("userId", userId);
-
         navigate("/dashboard");
       } else {
         alert("Biometric login failed. Please try again.");
