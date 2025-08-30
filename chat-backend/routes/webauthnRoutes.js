@@ -92,20 +92,25 @@ router.post("/verify-registration", async (req, res) => {
         });
       }
 
-      // Store the credential ID EXACTLY as it comes (as string)
-      const credentialID = credential.id; // This is already a base64url string
+      // Store the credential ID exactly as it comes from the response
+      // The credential.id should be a base64url string
+      const credentialID = credential.id;
       const credentialPublicKey = Buffer.from(credential.publicKey);
       const counter = registrationInfo.counter || 0;
-      const transports = cred.response.transports || ["internal"];
 
-      console.log("Storing credentialID as string:", credentialID);
+      console.log("Registration - credentialID:", credentialID);
+      console.log(
+        "Registration - credentialPublicKey length:",
+        credentialPublicKey.length
+      );
+      console.log("Registration - counter:", counter);
 
       const newAuthenticator = new Authenticator({
         userId: new mongoose.Types.ObjectId(userId),
-        credentialID, // Store as string
+        credentialID,
         credentialPublicKey,
         counter,
-        transports,
+        transports: ["internal"], // Use default value
       });
 
       await newAuthenticator.save();
@@ -170,16 +175,6 @@ router.post("/verify-authentication", async (req, res) => {
     });
 
     if (!authenticator) {
-      // Debug: log all stored credential IDs
-      const allAuthenticators = await Authenticator.find({});
-      console.log(
-        "All stored authenticators:",
-        allAuthenticators.map((auth) => ({
-          credentialID: auth.credentialID,
-          userId: auth.userId,
-        }))
-      );
-
       return res.status(404).json({
         message: "Authenticator not found. Please register this device first.",
       });
@@ -190,11 +185,22 @@ router.post("/verify-authentication", async (req, res) => {
       authenticator.credentialID
     );
 
-    // For verification, we need to convert back to Buffer
-    const credentialIDBuffer = Buffer.from(
-      authenticator.credentialID,
-      "base64url"
-    );
+    // Create the authenticator object in the exact format expected by the library
+    const authenticatorForVerification = {
+      credentialID: Buffer.from(authenticator.credentialID, "base64url"),
+      credentialPublicKey: authenticator.credentialPublicKey,
+      counter: parseInt(authenticator.counter) || 0,
+    };
+
+    console.log("Authenticator for verification:", {
+      credentialID:
+        authenticatorForVerification.credentialID.toString("base64"),
+      credentialPublicKey:
+        authenticatorForVerification.credentialPublicKey
+          .toString("base64")
+          .substring(0, 50) + "...",
+      counter: authenticatorForVerification.counter,
+    });
 
     // Verify authentication
     const verification = await verifyAuthenticationResponse({
@@ -202,12 +208,7 @@ router.post("/verify-authentication", async (req, res) => {
       expectedChallenge: challengeFromResponse,
       expectedOrigin: origin,
       expectedRPID: rpID,
-      authenticator: {
-        credentialID: credentialIDBuffer,
-        credentialPublicKey: authenticator.credentialPublicKey,
-        counter: authenticator.counter,
-        transports: authenticator.transports,
-      },
+      authenticator: authenticatorForVerification,
       requireUserVerification: false,
     });
 
