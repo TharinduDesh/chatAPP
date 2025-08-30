@@ -35,16 +35,18 @@ router.post("/register-options", async (req, res) => {
       rpName,
       rpID,
       userID: user._id,
-      userName: user.email, // Use email as the userName for WebAuthn
+      userName: user.email,
       attestationType: "none",
       excludeCredentials: userAuthenticators.map((auth) => ({
         id: isoUint8Array.fromBase64(auth.credentialID),
         type: "public-key",
         transports: auth.transports,
       })),
+      // --- REPLACE THE OBJECT BELOW ---
       authenticatorSelection: {
-        residentKey: "required",
-        userVerification: "preferred",
+        authenticatorAttachment: "platform",
+        residentKey: "preferred",
+        userVerification: "required",
       },
     });
 
