@@ -1,5 +1,6 @@
 // chat-backend/routes/webauthnRoutes.js
 const express = require("express");
+const mongoose = require("mongoose");
 const {
   generateRegistrationOptions,
   verifyRegistrationResponse,
