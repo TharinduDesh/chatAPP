@@ -100,8 +100,6 @@ router.post("/verify-registration", async (req, res) => {
 
       const newAuthenticator = new Authenticator({
         userId,
-        // --- THE DEFINITIVE FIX: Save the credential ID directly ---
-        // The library provides the ID in the correct Base64URL string format.
         credentialID: credential.id,
         credentialPublicKey: Buffer.from(credential.publicKey).toString(
           "base64url"
@@ -185,7 +183,8 @@ router.post("/verify-authentication", async (req, res) => {
           "base64url"
         ),
         counter: authenticator.counter,
-        transports: authenticator.transports,
+        // --- THE DEFINITIVE FIX: Remove the transports property ---
+        // This property can cause internal library errors and is often optional for verification.
       },
       requireUserVerification: false,
     });
