@@ -39,7 +39,6 @@ router.post("/register-options", async (req, res) => {
         type: "public-key",
         transports: auth.transports,
       })),
-      // This setting requests a simple, device-bound key instead of a synced Google Passkey
       authenticatorSelection: {
         authenticatorAttachment: "platform",
         requireResidentKey: false,
@@ -80,13 +79,26 @@ router.post("/verify-registration", async (req, res) => {
         .json({ message: "Challenge not found or expired" });
     }
 
-    const verification = await verifyRegistrationResponse({
-      response: cred,
-      expectedChallenge: challengeFromResponse,
-      expectedOrigin: origin,
-      expectedRPID: rpID,
-      requireUserVerification: false,
-    });
+    let verification;
+    try {
+      verification = await verifyRegistrationResponse({
+        response: cred,
+        expectedChallenge: challengeFromResponse,
+        expectedOrigin: origin,
+        expectedRPID: rpID,
+        requireUserVerification: false,
+      });
+    } catch (error) {
+      console.error("Verification library threw an error:", error);
+      return res
+        .status(400)
+        .json({ message: `Verification error: ${error.message}` });
+    }
+
+    console.log(
+      "Full verification object:",
+      JSON.stringify(verification, null, 2)
+    );
 
     if (verification.verified && verification.registrationInfo) {
       const { registrationInfo } = verification;
@@ -107,7 +119,6 @@ router.post("/verify-registration", async (req, res) => {
           "base64url"
         ),
         counter: registrationInfo.counter || 0,
-        // --- THE FINAL FIX: Hardcode the known transport type ---
         transports: ["internal"],
       });
       await newAuthenticator.save();
