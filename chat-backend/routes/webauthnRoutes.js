@@ -92,25 +92,40 @@ router.post("/verify-registration", async (req, res) => {
         });
       }
 
-      // Store the credential ID exactly as it comes from the response
-      // The credential.id should be a base64url string
-      const credentialID = credential.id;
-      const credentialPublicKey = Buffer.from(credential.publicKey);
+      // Store the credential ID as a base64url string
+      let credentialID;
+      if (credential.id instanceof Uint8Array) {
+        credentialID = Buffer.from(credential.id).toString("base64url");
+      } else if (credential.id instanceof ArrayBuffer) {
+        credentialID = Buffer.from(credential.id).toString("base64url");
+      } else {
+        credentialID = credential.id; // Assume it's already a string
+      }
+
+      // Store the public key as Buffer
+      let credentialPublicKey;
+      if (credential.publicKey instanceof Uint8Array) {
+        credentialPublicKey = Buffer.from(credential.publicKey);
+      } else if (credential.publicKey instanceof ArrayBuffer) {
+        credentialPublicKey = Buffer.from(credential.publicKey);
+      } else {
+        credentialPublicKey = Buffer.from(credential.publicKey);
+      }
+
       const counter = registrationInfo.counter || 0;
 
-      console.log("Registration - credentialID:", credentialID);
-      console.log(
-        "Registration - credentialPublicKey length:",
-        credentialPublicKey.length
-      );
-      console.log("Registration - counter:", counter);
+      console.log("Registration completed:", {
+        credentialID,
+        credentialPublicKeyLength: credentialPublicKey.length,
+        counter,
+      });
 
       const newAuthenticator = new Authenticator({
         userId: new mongoose.Types.ObjectId(userId),
         credentialID,
         credentialPublicKey,
         counter,
-        transports: ["internal"], // Use default value
+        transports: ["internal"],
       });
 
       await newAuthenticator.save();
@@ -180,25 +195,44 @@ router.post("/verify-authentication", async (req, res) => {
       });
     }
 
-    console.log(
-      "Found authenticator with credentialID:",
-      authenticator.credentialID
-    );
+    console.log("Found authenticator:", {
+      credentialID: authenticator.credentialID,
+      counter: authenticator.counter,
+      hasCredentialPublicKey: !!authenticator.credentialPublicKey,
+    });
+
+    // Convert to the exact format expected by the library
+    // The library might expect the raw ArrayBuffer, not a Buffer
+    let credentialID;
+    if (typeof authenticator.credentialID === "string") {
+      // Convert base64url string to Uint8Array
+      credentialID = Uint8Array.from(
+        Buffer.from(authenticator.credentialID, "base64url")
+      );
+    } else {
+      credentialID = authenticator.credentialID;
+    }
+
+    let credentialPublicKey;
+    if (Buffer.isBuffer(authenticator.credentialPublicKey)) {
+      // Convert Buffer to Uint8Array
+      credentialPublicKey = Uint8Array.from(authenticator.credentialPublicKey);
+    } else {
+      credentialPublicKey = authenticator.credentialPublicKey;
+    }
 
     // Create the authenticator object in the exact format expected by the library
     const authenticatorForVerification = {
-      credentialID: Buffer.from(authenticator.credentialID, "base64url"),
-      credentialPublicKey: authenticator.credentialPublicKey,
+      credentialID: credentialID,
+      credentialPublicKey: credentialPublicKey,
       counter: parseInt(authenticator.counter) || 0,
     };
 
-    console.log("Authenticator for verification:", {
-      credentialID:
-        authenticatorForVerification.credentialID.toString("base64"),
-      credentialPublicKey:
-        authenticatorForVerification.credentialPublicKey
-          .toString("base64")
-          .substring(0, 50) + "...",
+    console.log("Prepared for verification:", {
+      credentialIDType:
+        authenticatorForVerification.credentialID.constructor.name,
+      credentialPublicKeyType:
+        authenticatorForVerification.credentialPublicKey.constructor.name,
       counter: authenticatorForVerification.counter,
     });
 
@@ -215,6 +249,10 @@ router.post("/verify-authentication", async (req, res) => {
     if (verification.verified) {
       authenticator.counter = verification.authenticationInfo.newCounter;
       await authenticator.save();
+      console.log(
+        "Authentication successful, counter updated to:",
+        authenticator.counter
+      );
     }
 
     await expectedChallenge.deleteOne();
