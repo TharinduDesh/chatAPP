@@ -8,19 +8,23 @@ const AuthenticatorSchema = new mongoose.Schema({
     required: true,
   },
   credentialID: {
-    type: String,
+    type: Buffer, // ✅ store as Buffer
     required: true,
     unique: true,
   },
   credentialPublicKey: {
-    type: String,
+    type: Buffer, // ✅ store as Buffer
     required: true,
   },
   counter: {
     type: Number,
     required: true,
+    default: 0,
   },
-  transports: [String],
+  transports: {
+    type: [String],
+    default: [],
+  },
 });
 
 module.exports = mongoose.model("Authenticator", AuthenticatorSchema);

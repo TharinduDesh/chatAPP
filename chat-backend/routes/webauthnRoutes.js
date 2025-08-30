@@ -16,7 +16,9 @@ const router = express.Router();
 const rpID = "sltchatapp1.netlify.app";
 const origin = `https://sltchatapp1.netlify.app`;
 
-// [POST] /api/webauthn/register-options
+/**
+ * [POST] /api/webauthn/register-options
+ */
 router.post("/register-options", async (req, res) => {
   const { email } = req.body;
 
@@ -31,7 +33,7 @@ router.post("/register-options", async (req, res) => {
     const options = await generateRegistrationOptions({
       rpName: "ChatApp Admin",
       rpID,
-      userID: user._id,
+      userID: user._id.toString(),
       userName: user.email,
       attestationType: "none",
       excludeCredentials: userAuthenticators.map((auth) => ({
@@ -53,7 +55,9 @@ router.post("/register-options", async (req, res) => {
   }
 });
 
-// [POST] /api/webauthn/verify-registration
+/**
+ * [POST] /api/webauthn/verify-registration
+ */
 router.post("/verify-registration", async (req, res) => {
   const { userId, cred } = req.body;
 
@@ -88,9 +92,9 @@ router.post("/verify-registration", async (req, res) => {
 
     if (verification.verified && verification.registrationInfo) {
       const { registrationInfo } = verification;
+      const { credentialPublicKey, credentialID, counter } = registrationInfo;
 
-      const { credential } = registrationInfo;
-      if (!credential || !credential.id || !credential.publicKey) {
+      if (!credentialID || !credentialPublicKey) {
         return res.status(500).json({
           message: "Verification failed due to missing credential data.",
         });
@@ -98,13 +102,12 @@ router.post("/verify-registration", async (req, res) => {
 
       const newAuthenticator = new Authenticator({
         userId,
-        credentialID: credential.id,
-        credentialPublicKey: Buffer.from(credential.publicKey).toString(
-          "base64url"
-        ),
-        counter: registrationInfo.counter || 0,
+        credentialID: Buffer.from(credentialID), // ✅ Store as Buffer
+        credentialPublicKey: Buffer.from(credentialPublicKey), // ✅ Store as Buffer
+        counter: counter || 0,
         transports: ["internal"],
       });
+
       await newAuthenticator.save();
     } else {
       return res
@@ -120,7 +123,9 @@ router.post("/verify-registration", async (req, res) => {
   }
 });
 
-// [POST] /api/webauthn/auth-options
+/**
+ * [POST] /api/webauthn/auth-options
+ */
 router.post("/auth-options", async (req, res) => {
   try {
     const options = await generateAuthenticationOptions({
@@ -136,7 +141,9 @@ router.post("/auth-options", async (req, res) => {
   }
 });
 
-// [POST] /api/webauthn/verify-authentication
+/**
+ * [POST] /api/webauthn/verify-authentication
+ */
 router.post("/verify-authentication", async (req, res) => {
   const { cred } = req.body;
 
@@ -157,7 +164,7 @@ router.post("/verify-authentication", async (req, res) => {
     }
 
     const authenticator = await Authenticator.findOne({
-      credentialID: cred.id,
+      credentialID: Buffer.from(cred.id, "base64url"), // ✅ Lookup using Buffer
     });
 
     if (!authenticator) {
@@ -172,13 +179,9 @@ router.post("/verify-authentication", async (req, res) => {
       expectedOrigin: origin,
       expectedRPID: rpID,
       authenticator: {
-        credentialID: Buffer.from(authenticator.credentialID, "base64url"),
-        credentialPublicKey: Buffer.from(
-          authenticator.credentialPublicKey,
-          "base64url"
-        ),
+        credentialID: authenticator.credentialID, // ✅ Already Buffer
+        credentialPublicKey: authenticator.credentialPublicKey, // ✅ Already Buffer
         counter: authenticator.counter,
-        // --- THE DEFINITIVE FIX: Add the transports property back in ---
         transports: authenticator.transports,
       },
       requireUserVerification: false,
