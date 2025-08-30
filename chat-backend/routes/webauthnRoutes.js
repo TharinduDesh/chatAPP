@@ -21,21 +21,17 @@ const origin = `https://sltchatapp1.netlify.app`;
 // [POST] /api/webauthn/register-options
 router.post("/register-options", async (req, res) => {
   const { email } = req.body;
-  console.log(
-    `[${new Date().toISOString()}] Received register-options request for email: ${email}`
-  );
 
   try {
     const user = await Admin.findOne({ email });
     if (!user) {
-      console.error("User not found for email:", email);
       return res.status(404).json({ message: "User not found" });
     }
 
     const userAuthenticators = await Authenticator.find({ userId: user._id });
 
     const options = await generateRegistrationOptions({
-      rpName: "ChatApp Admin", // You can give your app a name here
+      rpName: "ChatApp Admin",
       rpID,
       userID: user._id,
       userName: user.email,
@@ -52,18 +48,10 @@ router.post("/register-options", async (req, res) => {
       },
     });
 
-    console.log(
-      `[${new Date().toISOString()}] Generated challenge: ${options.challenge}`
-    );
     await Challenge.create({ challenge: options.challenge });
-    console.log(`[${new Date().toISOString()}] Saved challenge to DB.`);
-
     res.json(options);
   } catch (error) {
-    console.error(
-      `[${new Date().toISOString()}] Error in /register-options:`,
-      error
-    );
+    console.error(`Error in /register-options:`, error);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -71,15 +59,18 @@ router.post("/register-options", async (req, res) => {
 // [POST] /api/webauthn/verify-registration
 router.post("/verify-registration", async (req, res) => {
   const { userId, cred } = req.body;
-  const challengeFromResponse = cred.response.clientDataJSON.challenge;
-  console.log(
-    `[${new Date().toISOString()}] Received verify-registration request for challenge: ${challengeFromResponse}`
-  );
 
   try {
+    // --- FIX START: Correctly parse the challenge from the client response ---
+    const clientDataJSON = Buffer.from(
+      cred.response.clientDataJSON,
+      "base64"
+    ).toString("utf8");
+    const challengeFromResponse = JSON.parse(clientDataJSON).challenge;
+    // --- FIX END ---
+
     const user = await Admin.findById(userId);
     if (!user) {
-      console.error("Verification failed: User not found with ID:", userId);
       return res.status(404).json({ message: "User not found" });
     }
 
@@ -87,16 +78,10 @@ router.post("/verify-registration", async (req, res) => {
       challenge: challengeFromResponse,
     });
     if (!expectedChallenge) {
-      console.error(
-        `[${new Date().toISOString()}] Verification failed: Challenge not found in DB.`
-      );
       return res
         .status(400)
         .json({ message: "Challenge not found or expired" });
     }
-    console.log(
-      `[${new Date().toISOString()}] Found matching challenge in DB. Created at: ${expectedChallenge.createdAt.toISOString()}`
-    );
 
     const verification = await verifyRegistrationResponse({
       response: cred,
@@ -107,7 +92,6 @@ router.post("/verify-registration", async (req, res) => {
     });
 
     if (verification.verified) {
-      console.log(`[${new Date().toISOString()}] Verification successful!`);
       const { registrationInfo } = verification;
       const newAuthenticator = new Authenticator({
         userId,
@@ -119,25 +103,12 @@ router.post("/verify-registration", async (req, res) => {
         transports: cred.response.transports,
       });
       await newAuthenticator.save();
-      console.log(
-        `[${new Date().toISOString()}] Saved new authenticator for user: ${userId}`
-      );
-    } else {
-      console.error(`[${new Date().toISOString()}] Verification failed.`);
     }
 
     await expectedChallenge.deleteOne();
-    console.log(
-      `[${new Date().toISOString()}] Deleted used challenge from DB.`
-    );
-
     res.json({ verified: verification.verified });
   } catch (error) {
-    // This is the corrected line
-    console.error(
-      `[${new Date().toISOString()}] Error in /verify-registration:`,
-      error
-    );
+    console.error(`Error in /verify-registration:`, error);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -180,8 +151,16 @@ router.post("/verify-authentication", async (req, res) => {
   const { cred } = req.body;
 
   try {
+    // --- FIX START: Correctly parse the challenge from the client response ---
+    const clientDataJSON = Buffer.from(
+      cred.response.clientDataJSON,
+      "base64"
+    ).toString("utf8");
+    const challengeFromResponse = JSON.parse(clientDataJSON).challenge;
+    // --- FIX END ---
+
     const expectedChallenge = await Challenge.findOne({
-      challenge: cred.response.clientDataJSON.challenge,
+      challenge: challengeFromResponse,
     });
     if (!expectedChallenge) {
       return res
@@ -198,7 +177,7 @@ router.post("/verify-authentication", async (req, res) => {
 
     const verification = await verifyAuthenticationResponse({
       response: cred,
-      expectedChallenge: cred.response.clientDataJSON.challenge,
+      expectedChallenge: challengeFromResponse,
       expectedOrigin: origin,
       expectedRPID: rpID,
       authenticator: {
@@ -207,7 +186,7 @@ router.post("/verify-authentication", async (req, res) => {
           authenticator.credentialPublicKey
         ),
         counter: authenticator.counter,
-        transports: authentitor.transports,
+        transports: authenticator.transports,
       },
       requireUserVerification: false,
     });
