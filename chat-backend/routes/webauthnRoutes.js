@@ -107,7 +107,7 @@ router.post("/verify-registration", async (req, res) => {
       }
 
       const newAuthenticator = new Authenticator({
-        userId: mongoose.Types.ObjectId(userId),
+        userId: new mongoose.Types.ObjectId(userId),
         credentialID,
         credentialPublicKey,
         counter,
