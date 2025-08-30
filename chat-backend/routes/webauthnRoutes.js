@@ -39,10 +39,10 @@ router.post("/register-options", async (req, res) => {
         type: "public-key",
         transports: auth.transports,
       })),
-      // --- THE FINAL FIX: Strongly prefer a device-bound key ---
+      // This setting requests a simple, device-bound key instead of a synced Google Passkey
       authenticatorSelection: {
         authenticatorAttachment: "platform",
-        requireResidentKey: false, // Do not require a synced passkey
+        requireResidentKey: false,
         userVerification: "required",
       },
     });
@@ -93,10 +93,6 @@ router.post("/verify-registration", async (req, res) => {
 
       const { credential } = registrationInfo;
       if (!credential || !credential.id || !credential.publicKey) {
-        console.error(
-          "Verification object is missing required nested credential data:",
-          registrationInfo
-        );
         return res
           .status(500)
           .json({
@@ -115,10 +111,6 @@ router.post("/verify-registration", async (req, res) => {
       });
       await newAuthenticator.save();
     } else {
-      console.error(
-        "Verification failed or registrationInfo is missing. Verified:",
-        verification.verified
-      );
       return res
         .status(400)
         .json({ message: "Could not verify authenticator." });
