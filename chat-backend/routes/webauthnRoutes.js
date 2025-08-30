@@ -53,9 +53,7 @@ router.post("/register-options", async (req, res) => {
   }
 });
 
-/**
- * [POST] /api/webauthn/verify-registration
- */
+// [POST] /api/webauthn/verify-registration
 router.post("/verify-registration", async (req, res) => {
   const { userId, cred } = req.body;
 
@@ -99,9 +97,9 @@ router.post("/verify-registration", async (req, res) => {
       }
 
       const newAuthenticator = new Authenticator({
-        userId,
-        credentialID: Buffer.from(credentialID), // ✅ Store as Buffer
-        credentialPublicKey: Buffer.from(credentialPublicKey), // ✅ Store as Buffer
+        userId: mongoose.Types.ObjectId(userId), // ✅ ensure ObjectId type
+        credentialID, // already Buffer
+        credentialPublicKey, // already Buffer
         counter: counter || 0,
         transports: ["internal"],
       });
