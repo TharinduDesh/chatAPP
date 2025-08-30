@@ -35,13 +35,12 @@ router.post("/register-options", async (req, res) => {
       userName: user.email,
       attestationType: "none",
       excludeCredentials: userAuthenticators.map((auth) => ({
-        // Pass the raw string from the DB for this function's validation
         id: auth.credentialID,
         type: "public-key",
         transports: auth.transports,
       })),
+      // --- REVERT TO PREFERRING A SYNCED GOOGLE PASSKEY ---
       authenticatorSelection: {
-        authenticatorAttachment: "platform",
         residentKey: "preferred",
         userVerification: "required",
       },
@@ -142,7 +141,6 @@ router.post("/auth-options", async (req, res) => {
     const options = await generateAuthenticationOptions({
       rpID,
       allowCredentials: userAuthenticators.map((auth) => ({
-        // --- THE FIX: Pass the raw string from the DB for this function's validation ---
         id: auth.credentialID,
         type: "public-key",
         transports: auth.transports,
@@ -191,7 +189,6 @@ router.post("/verify-authentication", async (req, res) => {
       expectedOrigin: origin,
       expectedRPID: rpID,
       authenticator: {
-        // This function correctly requires Buffers, so we keep the conversion here
         credentialID: Buffer.from(authenticator.credentialID, "base64url"),
         credentialPublicKey: Buffer.from(
           authenticator.credentialPublicKey,
