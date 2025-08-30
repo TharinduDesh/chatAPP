@@ -173,16 +173,35 @@ router.post("/verify-authentication", async (req, res) => {
         .json({ message: "Challenge not found or expired" });
     }
 
-    const authenticator = await Authenticator.findOne({
-      credentialID: cred.id, // use directly
-    });
+    // ---- Handle cred.id correctly ----
+    let credentialID;
+    if (typeof cred.id === "string") {
+      credentialID = cred.id; // frontend sent string (base64url)
+    } else if (cred.id instanceof ArrayBuffer) {
+      credentialID = Buffer.from(new Uint8Array(cred.id)).toString("base64url"); // convert ArrayBuffer → base64url
+    } else {
+      console.error("Unknown cred.id type:", cred.id);
+      return res.status(400).json({ message: "Invalid credential ID format" });
+    }
+
+    console.log("Incoming credentialID:", credentialID);
+
+    // Find the authenticator in DB
+    const authenticator = await Authenticator.findOne({ credentialID });
 
     if (!authenticator) {
+      console.log(
+        "Stored credentialIDs in DB:",
+        await Authenticator.find().select("credentialID")
+      );
       return res.status(404).json({
         message: "Authenticator not found. Please register this device first.",
       });
     }
 
+    console.log("Found authenticator:", authenticator);
+
+    // Verify authentication
     const verification = await verifyAuthenticationResponse({
       response: cred,
       expectedChallenge: challengeFromResponse,
@@ -208,8 +227,8 @@ router.post("/verify-authentication", async (req, res) => {
     await expectedChallenge.deleteOne();
     res.json({ verified: verification.verified });
   } catch (error) {
-    console.error(`Error in /verify-authentication:`, error);
-    res.status(500).json({ message: "Server error" });
+    console.error("Error in /verify-authentication:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 });
 

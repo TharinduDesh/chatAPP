@@ -120,8 +120,8 @@ const ProfilePage = () => {
     }
   };
 
+  // ------------------- NEW: Handle Biometric Registration -------------------
   const handleRegisterBiometrics = async () => {
-    // Ensure we have the admin data before proceeding
     if (!admin || !admin.email || !admin._id) {
       setSnackbar({
         open: true,
@@ -132,8 +132,9 @@ const ProfilePage = () => {
     }
 
     try {
-      // Use the actual admin data from the state
+      // Use updated registerBiometrics helper
       const { verified } = await registerBiometrics(admin.email, admin._id);
+
       if (verified) {
         setSnackbar({
           open: true,

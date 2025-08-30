@@ -9,6 +9,8 @@ import {
   Typography,
   Box,
   Divider,
+  Snackbar,
+  Alert,
 } from "@mui/material";
 import { loginWithBiometrics } from "../services/webauthnService";
 import Fingerprint from "@mui/icons-material/Fingerprint";
@@ -16,43 +18,75 @@ import Fingerprint from "@mui/icons-material/Fingerprint";
 const LoginPage = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [snackbar, setSnackbar] = useState({
+    open: false,
+    message: "",
+    severity: "success",
+  });
   const navigate = useNavigate();
 
   const handleLogin = async (e) => {
     e.preventDefault();
     try {
       await login(email, password);
-      navigate("/dashboard"); // Redirect to dashboard on successful login
+      navigate("/dashboard");
     } catch (error) {
       console.error("Login failed", error);
-      // You can add error handling here (e.g., show a snackbar)
+      setSnackbar({
+        open: true,
+        message:
+          error.response?.data?.message || "Login failed. Please try again.",
+        severity: "error",
+      });
     }
   };
 
   const handleBiometricLogin = async () => {
     if (!email) {
-      alert("Please enter your Email Address to log in with biometrics.");
+      setSnackbar({
+        open: true,
+        message: "Please enter your Email Address to log in with biometrics.",
+        severity: "warning",
+      });
       return;
     }
+
     try {
-      // We now pass the email as the username
+      // Call the updated WebAuthn helper
       const { verified } = await loginWithBiometrics(email);
+
       if (verified) {
-        // After successful verification, we need a way to get the auth token.
-        // For simplicity, we'll call the regular login endpoint again,
-        // but in a real app, you might have a dedicated endpoint for this.
-        await login(email, null, true); // Pass a flag indicating biometric login
-        alert("Biometric login successful!");
+        // Biometric login successful, call your normal login to set session/token
+        await login(email, null, true); // 'true' indicates biometric login
+
+        setSnackbar({
+          open: true,
+          message: "Biometric login successful!",
+          severity: "success",
+        });
+
         navigate("/dashboard");
       } else {
-        alert("Biometric login failed. Please try again.");
+        setSnackbar({
+          open: true,
+          message: "Biometric login failed. Please try again.",
+          severity: "warning",
+        });
       }
     } catch (error) {
-      alert(
-        error.response?.data?.message ||
-          "An error occurred during biometric login."
-      );
+      console.error("Biometric login error:", error);
+      setSnackbar({
+        open: true,
+        message:
+          error.response?.data?.message ||
+          "An error occurred during biometric login.",
+        severity: "error",
+      });
     }
+  };
+
+  const handleCloseSnackbar = () => {
+    setSnackbar({ ...snackbar, open: false });
   };
 
   return (
@@ -109,7 +143,6 @@ const LoginPage = () => {
           <Typography variant="body1" sx={{ mb: 1 }}>
             Use Biometrics
           </Typography>
-          {/* The email field above will be used for biometric login */}
           <Button
             onClick={handleBiometricLogin}
             fullWidth
@@ -126,6 +159,20 @@ const LoginPage = () => {
           </Link>
         </Box>
       </Box>
+
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={6000}
+        onClose={handleCloseSnackbar}
+      >
+        <Alert
+          onClose={handleCloseSnackbar}
+          severity={snackbar.severity}
+          sx={{ width: "100%" }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Container>
   );
 };
