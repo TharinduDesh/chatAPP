@@ -10,23 +10,26 @@ const webauthnApi = axios.create({
   baseURL: `${API_BASE_URL}/api/webauthn`,
 });
 
-// ------------------- REGISTER BIOMETRICS -------------------
+// ---------------------
+// Register Biometrics
+// ---------------------
 export const registerBiometrics = async (email, userId) => {
   try {
-    // Get registration options from server
+    // 1️⃣ Get registration options from server
     const optionsResponse = await webauthnApi.post("/register-options", {
       email,
     });
+    const options = optionsResponse.data;
 
-    // Start registration in browser
-    const credential = await startRegistration(optionsResponse.data);
+    // 2️⃣ Start registration in browser
+    const cred = await startRegistration(options);
 
-    // Send credential to server for verification
+    // 3️⃣ Send registration response to server
     const verificationResponse = await webauthnApi.post(
       "/verify-registration",
       {
         userId,
-        cred: credential,
+        cred,
       }
     );
 
@@ -37,27 +40,29 @@ export const registerBiometrics = async (email, userId) => {
   }
 };
 
-// ------------------- LOGIN WITH BIOMETRICS -------------------
+// ---------------------
+// Login with Biometrics
+// ---------------------
 export const loginWithBiometrics = async (email) => {
   try {
-    // Get authentication options from server
+    // 1️⃣ Get authentication options from server
     const optionsResponse = await webauthnApi.post("/auth-options", { email });
+    const options = optionsResponse.data;
 
-    // Start authentication in browser
-    const credential = await startAuthentication(optionsResponse.data);
+    // 2️⃣ Start authentication in browser
+    const cred = await startAuthentication(options);
 
-    // Send credential to server for verification
+    // 3️⃣ Send authentication response to server
     const verificationResponse = await webauthnApi.post(
       "/verify-authentication",
       {
-        email,
-        cred: credential,
+        cred,
       }
     );
 
     return verificationResponse.data;
   } catch (error) {
-    console.error("Biometric authentication failed:", error);
+    console.error("Biometric login failed:", error);
     throw error;
   }
 };
