@@ -14,8 +14,8 @@ const Challenge = require("../models/Challenge");
 const router = express.Router();
 
 const rpName = "Your App Name";
-const rpID = "localhost";
-const origin = `http://${rpID}:3000`;
+const rpID = "sltchatapp1.netlify.app";
+const origin = `https://sltchatapp1.netlify.app`;
 
 // [POST] /api/webauthn/register-options
 router.post("/register-options", async (req, res) => {
