@@ -13,6 +13,7 @@ const Challenge = require("../models/Challenge");
 
 const router = express.Router();
 
+// Make sure these match your Netlify deployment exactly
 const rpID = "sltchatapp1.netlify.app";
 const origin = `https://sltchatapp1.netlify.app`;
 
@@ -26,14 +27,14 @@ router.post("/register-options", async (req, res) => {
 
     const userAuthenticators = await Authenticator.find({ userId: user._id });
 
-    const options = generateRegistrationOptions({
+    const options = await generateRegistrationOptions({
       rpName: "ChatApp Admin",
       rpID,
-      userID: user._id.toString(), // store as string
+      userID: Buffer.from(user._id.toString()), // Buffer for userID
       userName: user.email,
       attestationType: "none",
       excludeCredentials: userAuthenticators.map((auth) => ({
-        id: auth.credentialID, // stored as string
+        id: Buffer.from(auth.credentialID, "base64url"),
         type: "public-key",
         transports: auth.transports,
       })),
@@ -82,7 +83,8 @@ router.post("/verify-registration", async (req, res) => {
     });
 
     if (verification.verified && verification.registrationInfo) {
-      const credential = verification.registrationInfo.credential;
+      const registrationInfo = verification.registrationInfo;
+      const credential = registrationInfo.credential;
 
       if (!credential || !credential.id || !credential.publicKey) {
         return res.status(500).json({
@@ -90,7 +92,7 @@ router.post("/verify-registration", async (req, res) => {
         });
       }
 
-      const credentialID = Buffer.from(credential.id).toString("base64url"); // string
+      const credentialID = Buffer.from(credential.id).toString("base64url");
       const credentialPublicKey = Buffer.from(credential.publicKey).toString(
         "base64url"
       );
@@ -99,7 +101,7 @@ router.post("/verify-registration", async (req, res) => {
 
       const newAuthenticator = new Authenticator({
         userId: new mongoose.Types.ObjectId(userId),
-        credentialID, // store as string
+        credentialID,
         credentialPublicKey,
         counter,
         transports,
@@ -122,20 +124,9 @@ router.post("/verify-registration", async (req, res) => {
 
 // ---------------- AUTH OPTIONS ----------------
 router.post("/auth-options", async (req, res) => {
-  const { email } = req.body;
   try {
-    const user = await Admin.findOne({ email });
-    if (!user) return res.status(404).json({ message: "User not found" });
-
-    const authenticators = await Authenticator.find({ userId: user._id });
-
-    const options = generateAuthenticationOptions({
+    const options = await generateAuthenticationOptions({
       rpID,
-      allowCredentials: authenticators.map((auth) => ({
-        id: auth.credentialID, // string
-        type: "public-key",
-        transports: auth.transports,
-      })),
       userVerification: "preferred",
     });
 
@@ -148,6 +139,7 @@ router.post("/auth-options", async (req, res) => {
 });
 
 // ---------------- VERIFY AUTHENTICATION ----------------
+// [POST] /api/webauthn/verify-authentication
 router.post("/verify-authentication", async (req, res) => {
   const { cred } = req.body;
 
@@ -161,20 +153,41 @@ router.post("/verify-authentication", async (req, res) => {
     const expectedChallenge = await Challenge.findOne({
       challenge: challengeFromResponse,
     });
-    if (!expectedChallenge)
+    if (!expectedChallenge) {
       return res
         .status(400)
         .json({ message: "Challenge not found or expired" });
+    }
 
-    const credentialID = Buffer.from(cred.id).toString("base64url");
+    // ---- Handle cred.id correctly ----
+    let credentialID;
+    if (typeof cred.id === "string") {
+      credentialID = cred.id; // frontend sent string (base64url)
+    } else if (cred.id instanceof ArrayBuffer) {
+      credentialID = Buffer.from(new Uint8Array(cred.id)).toString("base64url"); // convert ArrayBuffer → base64url
+    } else {
+      console.error("Unknown cred.id type:", cred.id);
+      return res.status(400).json({ message: "Invalid credential ID format" });
+    }
 
+    console.log("Incoming credentialID:", credentialID);
+
+    // Find the authenticator in DB
     const authenticator = await Authenticator.findOne({ credentialID });
+
     if (!authenticator) {
+      console.log(
+        "Stored credentialIDs in DB:",
+        await Authenticator.find().select("credentialID")
+      );
       return res.status(404).json({
         message: "Authenticator not found. Please register this device first.",
       });
     }
 
+    console.log("Found authenticator:", authenticator);
+
+    // Verify authentication
     const verification = await verifyAuthenticationResponse({
       response: cred,
       expectedChallenge: challengeFromResponse,
