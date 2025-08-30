@@ -107,7 +107,8 @@ router.post("/verify-registration", async (req, res) => {
           "base64url"
         ),
         counter: registrationInfo.counter || 0,
-        transports: [registrationInfo.credentialDeviceType],
+        // --- THE FINAL FIX: Hardcode the known transport type ---
+        transports: ["internal"],
       });
       await newAuthenticator.save();
     } else {
