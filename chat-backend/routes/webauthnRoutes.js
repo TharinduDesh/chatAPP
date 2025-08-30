@@ -91,11 +91,9 @@ router.post("/verify-registration", async (req, res) => {
 
       const { credential } = registrationInfo;
       if (!credential || !credential.id || !credential.publicKey) {
-        return res
-          .status(500)
-          .json({
-            message: "Verification failed due to missing credential data.",
-          });
+        return res.status(500).json({
+          message: "Verification failed due to missing credential data.",
+        });
       }
 
       const newAuthenticator = new Authenticator({
@@ -123,10 +121,25 @@ router.post("/verify-registration", async (req, res) => {
 });
 
 // [POST] /api/webauthn/auth-options
+// [POST] /api/webauthn/auth-options
 router.post("/auth-options", async (req, res) => {
+  const { email } = req.body; // Get email from request
+
   try {
+    const user = await Admin.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const userAuthenticators = await Authenticator.find({ userId: user._id });
+
     const options = await generateAuthenticationOptions({
       rpID,
+      allowCredentials: userAuthenticators.map((auth) => ({
+        id: Buffer.from(auth.credentialID, "base64url"), // Convert stored credential ID to Buffer
+        type: "public-key",
+        transports: auth.transports,
+      })),
       userVerification: "preferred",
     });
 
@@ -140,7 +153,7 @@ router.post("/auth-options", async (req, res) => {
 
 // [POST] /api/webauthn/verify-authentication
 router.post("/verify-authentication", async (req, res) => {
-  const { cred } = req.body;
+  const { cred, email } = req.body; // Add email to the request
 
   try {
     const clientDataJSON = Buffer.from(
@@ -158,18 +171,32 @@ router.post("/verify-authentication", async (req, res) => {
         .json({ message: "Challenge not found or expired" });
     }
 
+    // Find user by email first
+    const user = await Admin.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Convert the incoming credential ID to base64url format for comparison
+    const incomingCredentialID = cred.id;
+
+    // Find authenticator by user ID and credential ID
     const authenticator = await Authenticator.findOne({
-      credentialID: cred.id,
+      userId: user._id,
+      credentialID: incomingCredentialID,
     });
 
     if (!authenticator) {
-      return res
-        .status(404)
-        .json({
-          message:
-            "Authenticator not found. Please register this device first.",
-        });
+      return res.status(404).json({
+        message: "Authenticator not found. Please register this device first.",
+      });
     }
+
+    // Convert stored public key back to Buffer
+    const credentialPublicKey = Buffer.from(
+      authenticator.credentialPublicKey,
+      "base64url"
+    );
 
     const verification = await verifyAuthenticationResponse({
       response: cred,
@@ -178,12 +205,8 @@ router.post("/verify-authentication", async (req, res) => {
       expectedRPID: rpID,
       authenticator: {
         credentialID: Buffer.from(authenticator.credentialID, "base64url"),
-        credentialPublicKey: Buffer.from(
-          authenticator.credentialPublicKey,
-          "base64url"
-        ),
+        credentialPublicKey: credentialPublicKey,
         counter: authenticator.counter,
-        // --- THE DEFINITIVE FIX: Add the transports property back in ---
         transports: authenticator.transports,
       },
       requireUserVerification: false,
@@ -192,10 +215,14 @@ router.post("/verify-authentication", async (req, res) => {
     if (verification.verified) {
       authenticator.counter = verification.authenticationInfo.newCounter;
       await authenticator.save();
+
+      // Return user ID for session creation
+      res.json({ verified: true, userId: user._id });
+    } else {
+      res.json({ verified: false });
     }
 
     await expectedChallenge.deleteOne();
-    res.json({ verified: verification.verified });
   } catch (error) {
     console.error(`Error in /verify-authentication:`, error);
     res.status(500).json({ message: "Server error" });
