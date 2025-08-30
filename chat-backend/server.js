@@ -19,7 +19,15 @@ const io = new Server(httpServer, { cors: { origin: "*" } });
 
 // --- Global Middleware ---
 // This section is now corrected and simplified.
-app.use(cors());
+const corsOptions = {
+  origin: "https://sltchatapp1.netlify.app", // Your Netlify frontend URL
+  methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
+  credentials: true,
+  optionsSuccessStatus: 204,
+};
+
+app.use(cors(corsOptions));
+
 app.use(express.json()); // This is the crucial line that parses JSON bodies.
 
 app.set("socketio", io);
