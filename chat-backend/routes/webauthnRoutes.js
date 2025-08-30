@@ -125,33 +125,50 @@ router.post("/verify-registration", async (req, res) => {
 // [POST] /auth-options
 // ------------------------
 router.post("/auth-options", async (req, res) => {
-  const { email } = req.body;
-
   try {
-    const user = await Admin.findOne({ email });
-    if (!user) return res.status(404).json({ message: "User not found" });
+    const { email } = req.body;
 
-    const authenticators = await Authenticator.find({ userId: user._id });
+    if (!email) {
+      return res.status(400).json({ message: "Email is required" });
+    }
 
-    const allowCredentials = authenticators
-      .filter((auth) => auth.credentialID)
-      .map((auth) => ({
-        id: Buffer.from(auth.credentialID, "base64url"),
-        type: "public-key",
-        transports: auth.transports || ["internal"],
-      }));
+    const admin = await Admin.findOne({ email });
+    if (!admin) {
+      return res.status(404).json({ message: "Admin not found" });
+    }
 
+    const authenticators = await Authenticator.find({ userId: admin._id });
+
+    // Build allowCredentials array for the authenticators
+    const allowCredentials = authenticators.map((auth) => ({
+      id: Buffer.from(auth.credentialID, "base64url"), // convert base64url string to buffer
+      type: "public-key",
+      transports: auth.transports || ["internal"],
+    }));
+
+    // Generate options for WebAuthn login
     const options = generateAuthenticationOptions({
-      rpID,
       userVerification: "preferred",
       allowCredentials,
+      rpID: process.env.RP_ID, // e.g., 'sltchatapp1.netlify.app'
     });
 
-    await Challenge.create({ challenge: options.challenge });
+    if (!options.challenge) {
+      throw new Error("Failed to generate challenge");
+    }
+
+    // Save the challenge to DB (as base64url string)
+    await Challenge.create({
+      userId: admin._id,
+      challenge: options.challenge.toString("base64url"),
+    });
+
     res.json(options);
   } catch (error) {
     console.error("Error in /auth-options:", error);
-    res.status(500).json({ message: "Server error" });
+    res
+      .status(500)
+      .json({ message: error.message || "Failed to generate auth options" });
   }
 });
 
