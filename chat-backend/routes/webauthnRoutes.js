@@ -202,49 +202,45 @@ router.post("/verify-authentication", async (req, res) => {
     });
 
     // Convert to the exact format expected by the library
-    // The library might expect the raw ArrayBuffer, not a Buffer
-    let credentialID;
-    if (typeof authenticator.credentialID === "string") {
-      // Convert base64url string to Uint8Array
-      credentialID = Uint8Array.from(
-        Buffer.from(authenticator.credentialID, "base64url")
-      );
-    } else {
-      credentialID = authenticator.credentialID;
-    }
-
-    let credentialPublicKey;
-    if (Buffer.isBuffer(authenticator.credentialPublicKey)) {
-      // Convert Buffer to Uint8Array
-      credentialPublicKey = Uint8Array.from(authenticator.credentialPublicKey);
-    } else {
-      credentialPublicKey = authenticator.credentialPublicKey;
-    }
+    // The library expects the raw credential ID and public key as Uint8Array
+    const credentialID = Uint8Array.from(
+      Buffer.from(authenticator.credentialID, "base64url")
+    );
+    const credentialPublicKey = Uint8Array.from(
+      authenticator.credentialPublicKey
+    );
 
     // Create the authenticator object in the exact format expected by the library
     const authenticatorForVerification = {
       credentialID: credentialID,
       credentialPublicKey: credentialPublicKey,
       counter: parseInt(authenticator.counter) || 0,
+      // Add transports as an empty array if needed
+      transports: [],
     };
 
     console.log("Prepared for verification:", {
-      credentialIDType:
-        authenticatorForVerification.credentialID.constructor.name,
-      credentialPublicKeyType:
-        authenticatorForVerification.credentialPublicKey.constructor.name,
+      credentialIDLength: authenticatorForVerification.credentialID.length,
+      credentialPublicKeyLength:
+        authenticatorForVerification.credentialPublicKey.length,
       counter: authenticatorForVerification.counter,
     });
 
-    // Verify authentication
-    const verification = await verifyAuthenticationResponse({
-      response: cred,
-      expectedChallenge: challengeFromResponse,
-      expectedOrigin: origin,
-      expectedRPID: rpID,
-      authenticator: authenticatorForVerification,
-      requireUserVerification: false,
-    });
+    // Verify authentication - try a different approach
+    let verification;
+    try {
+      verification = await verifyAuthenticationResponse({
+        response: cred,
+        expectedChallenge: challengeFromResponse,
+        expectedOrigin: origin,
+        expectedRPID: rpID,
+        authenticator: authenticatorForVerification,
+        requireUserVerification: false,
+      });
+    } catch (verifyError) {
+      console.error("Verification function error:", verifyError);
+      throw verifyError;
+    }
 
     if (verification.verified) {
       authenticator.counter = verification.authenticationInfo.newCounter;
