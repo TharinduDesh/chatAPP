@@ -87,8 +87,31 @@ router.post("/verify-registration", async (req, res) => {
       requireUserVerification: false,
     });
 
+    // --- NEW DEBUGGING LOG ---
+    console.log(
+      "Full verification object:",
+      JSON.stringify(verification, null, 2)
+    );
+
     if (verification.verified && verification.registrationInfo) {
       const { registrationInfo } = verification;
+
+      // --- ADDED DEFENSIVE CHECK ---
+      if (
+        !registrationInfo.credentialID ||
+        !registrationInfo.credentialPublicKey
+      ) {
+        console.error(
+          "Verification object is missing required credential data:",
+          registrationInfo
+        );
+        return res
+          .status(500)
+          .json({
+            message: "Verification failed due to missing credential data.",
+          });
+      }
+
       const newAuthenticator = new Authenticator({
         userId,
         credentialID: Buffer.from(registrationInfo.credentialID).toString(
@@ -98,12 +121,14 @@ router.post("/verify-registration", async (req, res) => {
           registrationInfo.credentialPublicKey
         ).toString("base64url"),
         counter: registrationInfo.counter,
-        // FIX: Use the correct method to get transports
         transports: cred.response.getTransports(),
       });
       await newAuthenticator.save();
     } else {
-      // If verification is true but registrationInfo is missing, something is wrong.
+      console.error(
+        "Verification failed or registrationInfo is missing. Verified:",
+        verification.verified
+      );
       return res
         .status(400)
         .json({ message: "Could not verify authenticator." });
