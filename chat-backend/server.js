@@ -53,6 +53,8 @@ const analyticsRoutes = require("./routes/analyticsRoutes");
 const adminConversationRoutes = require("./routes/adminConversationRoutes");
 const adminMessageRoutes = require("./routes/adminMessageRoutes");
 
+const webauthnRoutes = require("./routes/webauthnRoutes");
+
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/conversations", conversationRoutes);
@@ -65,6 +67,8 @@ app.use("/api/logs", activityLogRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/admin/conversations", adminConversationRoutes);
 app.use("/api/admin/messages", adminMessageRoutes);
+
+app.use("/api/webauthn", webauthnRoutes);
 
 // --- Welcome Route & Server Listening ---
 app.get("/", (req, res) => res.send("Chat App Backend is Running!"));

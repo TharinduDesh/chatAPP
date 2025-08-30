@@ -50,7 +50,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             setState(() => _isBiometricEnabled = true);
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('Fingerprint Login Enabled!'),
+                content: Text('Biometric Login Enabled!'),
                 backgroundColor: Colors.green,
               ),
             );
@@ -77,7 +77,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await biometricService.deleteCredentials();
       setState(() => _isBiometricEnabled = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Fingerprint Login Disabled.')),
+        const SnackBar(content: Text('Biometric Login Disabled.')),
       );
     }
   }
@@ -121,9 +121,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               : ListView(
                 children: [
                   SwitchListTile(
-                    title: const Text('Enable Fingerprint Login'),
+                    title: const Text('Enable Biometric Login'),
                     subtitle: const Text(
-                      'Use your fingerprint for quick and secure login.',
+                      'Use your fingerprint or face for quick login.',
                     ),
                     value: _isBiometricEnabled,
                     onChanged: _onBiometricToggle,

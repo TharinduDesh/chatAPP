@@ -19,6 +19,7 @@ import {
   Alert,
 } from "@mui/material";
 import { deepOrange } from "@mui/material/colors";
+import { registerBiometrics } from "../services/webauthnService";
 
 const ProfilePage = () => {
   const [admin, setAdmin] = useState(null);
@@ -38,7 +39,6 @@ const ProfilePage = () => {
   });
 
   useEffect(() => {
-    // ... (this useEffect remains the same)
     const fetchAdminProfile = async () => {
       try {
         const data = await getAdminProfile();
@@ -67,7 +67,6 @@ const ProfilePage = () => {
   };
 
   const handleSaveChanges = async (e) => {
-    // ... (this function remains the same)
     e.preventDefault();
     setSaving(true);
     try {
@@ -121,6 +120,46 @@ const ProfilePage = () => {
     }
   };
 
+  const handleRegisterBiometrics = async () => {
+    // Ensure we have the admin data before proceeding
+    if (!admin || !admin.email || !admin._id) {
+      setSnackbar({
+        open: true,
+        message: "Admin data not available. Please refresh the page.",
+        severity: "error",
+      });
+      return;
+    }
+
+    try {
+      // Use the actual admin data from the state
+      const { verified } = await registerBiometrics(admin.email, admin._id);
+      if (verified) {
+        setSnackbar({
+          open: true,
+          message: "Biometrics registered successfully!",
+          severity: "success",
+        });
+      } else {
+        setSnackbar({
+          open: true,
+          message:
+            "Biometric registration failed. The request was denied or timed out.",
+          severity: "warning",
+        });
+      }
+    } catch (error) {
+      console.error("Biometric registration error:", error);
+      setSnackbar({
+        open: true,
+        message:
+          error.response?.data?.message ||
+          "An error occurred during biometric registration.",
+        severity: "error",
+      });
+    }
+  };
+
   const handleCloseSnackbar = () => {
     setSnackbar({ ...snackbar, open: false });
   };
@@ -145,7 +184,6 @@ const ProfilePage = () => {
       <Grid container spacing={3}>
         {/* Profile Details Card */}
         <Grid item xs={12} md={6}>
-          {/* ... (This card remains the same) ... */}
           <Card>
             <CardContent>
               <Box sx={{ display: "flex", alignItems: "center", mb: 3 }}>
@@ -207,9 +245,10 @@ const ProfilePage = () => {
           </Card>
         </Grid>
 
-        {/* Change Password Card - NOW ENABLED */}
+        {/* Change Password & Biometrics Card */}
         <Grid item xs={12} md={6}>
-          <Card>
+          {/* Change Password Card */}
+          <Card sx={{ mb: 3 }}>
             <CardContent>
               <Typography variant="h6" gutterBottom>
                 Change Password
@@ -267,6 +306,22 @@ const ProfilePage = () => {
                   )}
                 </Box>
               </form>
+            </CardContent>
+          </Card>
+
+          {/* Biometrics Card */}
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Biometric Authentication
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Register your device's fingerprint or face ID for a secure,
+                passwordless login experience.
+              </Typography>
+              <Button onClick={handleRegisterBiometrics} variant="outlined">
+                Register This Device
+              </Button>
             </CardContent>
           </Card>
         </Grid>

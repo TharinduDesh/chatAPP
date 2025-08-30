@@ -2,7 +2,16 @@
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { login } from "../services/authService";
-import { TextField, Button, Container, Typography, Box } from "@mui/material";
+import {
+  TextField,
+  Button,
+  Container,
+  Typography,
+  Box,
+  Divider,
+} from "@mui/material";
+import { loginWithBiometrics } from "../services/webauthnService";
+import Fingerprint from "@mui/icons-material/Fingerprint";
 
 const LoginPage = () => {
   const [email, setEmail] = useState("");
@@ -20,6 +29,32 @@ const LoginPage = () => {
     }
   };
 
+  const handleBiometricLogin = async () => {
+    if (!email) {
+      alert("Please enter your Email Address to log in with biometrics.");
+      return;
+    }
+    try {
+      // We now pass the email as the username
+      const { verified } = await loginWithBiometrics(email);
+      if (verified) {
+        // After successful verification, we need a way to get the auth token.
+        // For simplicity, we'll call the regular login endpoint again,
+        // but in a real app, you might have a dedicated endpoint for this.
+        await login(email, null, true); // Pass a flag indicating biometric login
+        alert("Biometric login successful!");
+        navigate("/dashboard");
+      } else {
+        alert("Biometric login failed. Please try again.");
+      }
+    } catch (error) {
+      alert(
+        error.response?.data?.message ||
+          "An error occurred during biometric login."
+      );
+    }
+  };
+
   return (
     <Container maxWidth="xs">
       <Box
@@ -33,12 +68,16 @@ const LoginPage = () => {
         <Typography component="h1" variant="h5">
           Admin Login
         </Typography>
-        <Box component="form" onSubmit={handleLogin} sx={{ mt: 1 }}>
+        <Box component="form" onSubmit={handleLogin} sx={{ mt: 3 }}>
           <TextField
             margin="normal"
             required
             fullWidth
+            id="email"
             label="Email Address"
+            name="email"
+            autoComplete="email"
+            autoFocus
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
@@ -46,8 +85,11 @@ const LoginPage = () => {
             margin="normal"
             required
             fullWidth
+            name="password"
             label="Password"
             type="password"
+            id="password"
+            autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
@@ -61,7 +103,24 @@ const LoginPage = () => {
           </Button>
         </Box>
 
-        <Box sx={{ textAlign: "center" }}>
+        <Divider sx={{ width: "100%", my: 2 }}>OR</Divider>
+
+        <Box sx={{ width: "100%", textAlign: "center" }}>
+          <Typography variant="body1" sx={{ mb: 1 }}>
+            Use Biometrics
+          </Typography>
+          {/* The email field above will be used for biometric login */}
+          <Button
+            onClick={handleBiometricLogin}
+            fullWidth
+            variant="outlined"
+            startIcon={<Fingerprint />}
+          >
+            Sign In with Biometrics
+          </Button>
+        </Box>
+
+        <Box sx={{ mt: 3, textAlign: "center" }}>
           <Link to="/signup" style={{ textDecoration: "none" }}>
             {"Don't have an admin account? Sign Up"}
           </Link>
