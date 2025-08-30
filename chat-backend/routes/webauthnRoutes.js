@@ -183,8 +183,8 @@ router.post("/verify-authentication", async (req, res) => {
           "base64url"
         ),
         counter: authenticator.counter,
-        // --- THE DEFINITIVE FIX: Remove the transports property ---
-        // This property can cause internal library errors and is often optional for verification.
+        // --- THE DEFINITIVE FIX: Add the transports property back in ---
+        transports: authenticator.transports,
       },
       requireUserVerification: false,
     });
