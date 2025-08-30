@@ -40,7 +40,6 @@ router.post("/register-options", async (req, res) => {
         transports: auth.transports,
       })),
       authenticatorSelection: {
-        // This forces the creation of a discoverable credential (passkey)
         residentKey: "required",
         userVerification: "required",
       },
@@ -126,8 +125,6 @@ router.post("/verify-registration", async (req, res) => {
 // [POST] /api/webauthn/auth-options
 router.post("/auth-options", async (req, res) => {
   try {
-    // This forces the browser to use discoverable credentials (passkeys),
-    // which is the modern, correct flow and avoids the server-side bugs.
     const options = await generateAuthenticationOptions({
       rpID,
       userVerification: "preferred",
@@ -161,8 +158,10 @@ router.post("/verify-authentication", async (req, res) => {
         .json({ message: "Challenge not found or expired" });
     }
 
-    // --- THE DEFINITIVE FIX ---
-    // First, find the authenticator by its unique ID. This is always reliable.
+    // --- FINAL DEBUGGING STEP ---
+    // Log the credential ID received from the browser during the login attempt.
+    console.log("Attempting to find authenticator with cred.id:", cred.id);
+
     const authenticator = await Authenticator.findOne({
       credentialID: cred.id,
     });
@@ -176,13 +175,12 @@ router.post("/verify-authentication", async (req, res) => {
         });
     }
 
-    // Now that we have the authenticator, we can verify the response.
     const verification = await verifyAuthenticationResponse({
       response: cred,
       expectedChallenge: challengeFromResponse,
       expectedOrigin: origin,
       expectedRPID: rpID,
-      authenticator, // Pass the whole authenticator object from our database
+      authenticator,
       requireUserVerification: false,
     });
 
@@ -192,7 +190,6 @@ router.post("/verify-authentication", async (req, res) => {
     }
 
     await expectedChallenge.deleteOne();
-    // In a real app, you would now create a JWT for the user found in `authenticator.userId`
     res.json({ verified: verification.verified });
   } catch (error) {
     console.error(`Error in /verify-authentication:`, error);
