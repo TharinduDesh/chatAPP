@@ -40,8 +40,6 @@ router.post("/register-options", async (req, res) => {
         transports: auth.transports,
       })),
       authenticatorSelection: {
-        // --- THE DEFINITIVE FIX ---
-        // This forces the creation of a discoverable passkey that includes the userHandle.
         residentKey: "required",
         userVerification: "required",
       },
@@ -160,20 +158,21 @@ router.post("/verify-authentication", async (req, res) => {
         .json({ message: "Challenge not found or expired" });
     }
 
-    const userHandle = cred.response.userHandle;
-    if (!userHandle) {
-      return res
-        .status(400)
-        .json({ message: "User handle not found in response." });
-    }
-
+    // --- THE DEFINITIVE FIX ---
+    // Instead of relying on userHandle, we find the authenticator by its unique credential ID.
+    // This is more reliable across different devices.
     const authenticator = await Authenticator.findOne({
       credentialID: cred.id,
-      userId: userHandle,
     });
 
     if (!authenticator) {
-      return res.status(404).json({ message: "Authenticator not found" });
+      // This error will now correctly trigger if the passkey is not in our database.
+      return res
+        .status(404)
+        .json({
+          message:
+            "Authenticator not found. Please register this device first.",
+        });
     }
 
     const verification = await verifyAuthenticationResponse({
