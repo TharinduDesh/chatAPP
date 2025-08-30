@@ -11,10 +11,12 @@ const Admin = require("../models/Admin");
 const Authenticator = require("../models/Authenticator");
 const Challenge = require("../models/Challenge");
 
+// --- NEW DEBUGGING STEP: Log the contents of the helper library ---
+console.log("Inspecting isoUint8Array helper:", isoUint8Array);
+
 const router = express.Router();
 
 // Make sure these match your Netlify deployment exactly
-
 const rpID = "sltchatapp1.netlify.app";
 const origin = `https://sltchatapp1.netlify.app`;
 
