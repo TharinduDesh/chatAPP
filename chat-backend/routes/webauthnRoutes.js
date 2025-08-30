@@ -92,21 +92,47 @@ router.post("/verify-registration", async (req, res) => {
         });
       }
 
-      // Store as Buffer objects (matching your schema)
-      const credentialID = Buffer.from(credential.id);
+      // DEBUG: Log what we're getting from the registration
+      console.log("Raw credential.id:", credential.id);
+      console.log("Raw credential.id type:", typeof credential.id);
+
+      if (credential.id instanceof Uint8Array) {
+        console.log("Credential.id is Uint8Array");
+      } else if (credential.id instanceof ArrayBuffer) {
+        console.log("Credential.id is ArrayBuffer");
+      }
+
+      // Store the credential ID exactly as received (as Buffer)
+      // The credential.id should be an ArrayBuffer or Uint8Array
+      let credentialIDBuffer;
+      if (credential.id instanceof ArrayBuffer) {
+        credentialIDBuffer = Buffer.from(credential.id);
+      } else if (credential.id instanceof Uint8Array) {
+        credentialIDBuffer = Buffer.from(credential.id.buffer);
+      } else {
+        // If it's already a Buffer or something else
+        credentialIDBuffer = Buffer.from(credential.id);
+      }
+
+      console.log(
+        "Storing credentialID as:",
+        credentialIDBuffer.toString("base64")
+      );
+
       const credentialPublicKey = Buffer.from(credential.publicKey);
       const counter = registrationInfo.counter || 0;
       const transports = cred.response.transports || ["internal"];
 
       const newAuthenticator = new Authenticator({
         userId: new mongoose.Types.ObjectId(userId),
-        credentialID,
+        credentialID: credentialIDBuffer,
         credentialPublicKey,
         counter,
         transports,
       });
 
       await newAuthenticator.save();
+      console.log("Authenticator saved successfully");
     } else {
       return res
         .status(400)
@@ -165,12 +191,18 @@ router.post("/verify-authentication", async (req, res) => {
     } else if (cred.id instanceof ArrayBuffer) {
       // If it's an ArrayBuffer, convert to Buffer
       incomingCredentialIDBuffer = Buffer.from(cred.id);
+    } else if (cred.id instanceof Uint8Array) {
+      // If it's a Uint8Array, convert to Buffer
+      incomingCredentialIDBuffer = Buffer.from(cred.id.buffer);
     } else {
-      console.error("Unknown cred.id type:", cred.id);
+      console.error("Unknown cred.id type:", typeof cred.id, cred.id);
       return res.status(400).json({ message: "Invalid credential ID format" });
     }
 
-    console.log("Incoming credentialID (Buffer):", incomingCredentialIDBuffer);
+    console.log(
+      "Incoming credentialID (Buffer):",
+      incomingCredentialIDBuffer.toString("base64")
+    );
 
     // Find authenticator by comparing Buffer objects
     const authenticator = await Authenticator.findOne({
@@ -183,7 +215,7 @@ router.post("/verify-authentication", async (req, res) => {
       console.log(
         "All stored authenticators:",
         allAuthenticators.map((auth) => ({
-          credentialID: auth.credentialID.toString("base64url"),
+          credentialID: auth.credentialID.toString("base64"),
           userId: auth.userId,
         }))
       );
@@ -193,11 +225,10 @@ router.post("/verify-authentication", async (req, res) => {
       });
     }
 
-    console.log("Found authenticator:", {
-      credentialID: authenticator.credentialID.toString("base64url"),
-      userId: authenticator.userId,
-      counter: authenticator.counter,
-    });
+    console.log(
+      "Found authenticator with credentialID:",
+      authenticator.credentialID.toString("base64")
+    );
 
     // Verify authentication - use the Buffer objects directly
     const verification = await verifyAuthenticationResponse({
