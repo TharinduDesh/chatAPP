@@ -174,7 +174,7 @@ router.post("/verify-authentication", async (req, res) => {
     }
 
     const authenticator = await Authenticator.findOne({
-      credentialID: cred.id, // match stored base64url string
+      credentialID: cred.id, // use directly
     });
 
     if (!authenticator) {
@@ -189,11 +189,11 @@ router.post("/verify-authentication", async (req, res) => {
       expectedOrigin: origin,
       expectedRPID: rpID,
       authenticator: {
-        credentialID: Buffer.from(authenticator.credentialID, "base64url"), // convert back to Buffer
+        credentialID: Buffer.from(authenticator.credentialID, "base64url"),
         credentialPublicKey: Buffer.from(
           authenticator.credentialPublicKey,
           "base64url"
-        ), // convert back to Buffer
+        ),
         counter: authenticator.counter,
         transports: authenticator.transports,
       },
