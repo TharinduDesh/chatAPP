@@ -124,25 +124,35 @@ router.post("/verify-registration", async (req, res) => {
 // [POST] /auth-options
 // ---------------------
 router.post("/auth-options", async (req, res) => {
+  const { email } = req.body; // email must be sent from frontend
   try {
+    if (!email) return res.status(400).json({ message: "Email is required" });
+
+    const user = await Admin.findOne({ email });
+    if (!user) return res.status(404).json({ message: "Admin not found" });
+
+    const authenticators = await Authenticator.find({ userId: user._id });
+
     const options = generateAuthenticationOptions({
       rpID,
       userVerification: "preferred",
+      allowCredentials: authenticators.map((auth) => ({
+        id: Buffer.from(auth.credentialID, "base64url"),
+        type: "public-key",
+        transports: auth.transports || ["internal"],
+      })),
     });
 
-    // Convert challenge to base64url string if needed
+    // Convert challenge to string for DB
     const challengeStr =
       typeof options.challenge === "string"
         ? options.challenge
         : Buffer.from(options.challenge).toString("base64url");
 
-    // Save challenge to DB
     await Challenge.create({ challenge: challengeStr });
 
-    // Replace the challenge in options with string version for browser
-    const optionsForBrowser = { ...options, challenge: challengeStr };
-
-    res.json(optionsForBrowser);
+    // Send options to browser
+    res.json({ ...options, challenge: challengeStr });
   } catch (error) {
     console.error(`Error in /auth-options:`, error);
     res.status(500).json({ message: "Server error" });
