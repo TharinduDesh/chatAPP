@@ -16,6 +16,15 @@ const router = express.Router();
 const rpID = "sltchatapp1.netlify.app";
 const origin = `https://sltchatapp1.netlify.app`;
 
+// Helper function to convert a Base64URL string to an ArrayBuffer
+const base64urlToArrayBuffer = (base64urlString) => {
+  const buffer = Buffer.from(base64urlString, "base64url");
+  return buffer.buffer.slice(
+    buffer.byteOffset,
+    buffer.byteOffset + buffer.byteLength
+  );
+};
+
 // [POST] /api/webauthn/register-options
 router.post("/register-options", async (req, res) => {
   const { email } = req.body;
@@ -35,8 +44,7 @@ router.post("/register-options", async (req, res) => {
       userName: user.email,
       attestationType: "none",
       excludeCredentials: userAuthenticators.map((auth) => ({
-        // Pass the raw string from the DB for this function
-        id: auth.credentialID,
+        id: base64urlToArrayBuffer(auth.credentialID),
         type: "public-key",
         transports: auth.transports,
       })),
@@ -150,8 +158,7 @@ router.post("/auth-options", async (req, res) => {
     const options = await generateAuthenticationOptions({
       rpID,
       allowCredentials: userAuthenticators.map((auth) => ({
-        // --- THE FIX: Pass the raw string from the DB for this function ---
-        id: auth.credentialID,
+        id: base64urlToArrayBuffer(auth.credentialID),
         type: "public-key",
         transports: auth.transports,
       })),
@@ -199,7 +206,6 @@ router.post("/verify-authentication", async (req, res) => {
       expectedOrigin: origin,
       expectedRPID: rpID,
       authenticator: {
-        // This function requires Buffers, so we keep the conversion here
         credentialID: Buffer.from(authenticator.credentialID, "base64url"),
         credentialPublicKey: Buffer.from(
           authenticator.credentialPublicKey,
