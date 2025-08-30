@@ -161,18 +161,10 @@ router.post("/verify-authentication", async (req, res) => {
         .json({ message: "Challenge not found or expired" });
     }
 
-    // With a discoverable credential, the userHandle is returned in the response
-    const userHandle = cred.response.userHandle;
-    if (!userHandle) {
-      return res
-        .status(400)
-        .json({ message: "User handle not found in response." });
-    }
-
-    // Find the authenticator by its ID and verify it belongs to the user from the userHandle
+    // --- THE DEFINITIVE FIX ---
+    // First, find the authenticator by its unique ID. This is always reliable.
     const authenticator = await Authenticator.findOne({
       credentialID: cred.id,
-      userId: userHandle,
     });
 
     if (!authenticator) {
@@ -184,20 +176,13 @@ router.post("/verify-authentication", async (req, res) => {
         });
     }
 
+    // Now that we have the authenticator, we can verify the response.
     const verification = await verifyAuthenticationResponse({
       response: cred,
       expectedChallenge: challengeFromResponse,
       expectedOrigin: origin,
       expectedRPID: rpID,
-      authenticator: {
-        credentialID: Buffer.from(authenticator.credentialID, "base64url"),
-        credentialPublicKey: Buffer.from(
-          authenticator.credentialPublicKey,
-          "base64url"
-        ),
-        counter: authenticator.counter,
-        transports: authenticator.transports,
-      },
+      authenticator, // Pass the whole authenticator object from our database
       requireUserVerification: false,
     });
 
@@ -207,10 +192,9 @@ router.post("/verify-authentication", async (req, res) => {
     }
 
     await expectedChallenge.deleteOne();
+    // In a real app, you would now create a JWT for the user found in `authenticator.userId`
     res.json({ verified: verification.verified });
   } catch (error) {
-    // --- SYNTAX ERROR FIX ---
-    // The previous version had a period here instead of an opening brace
     console.error(`Error in /verify-authentication:`, error);
     res.status(500).json({ message: "Server error" });
   }
