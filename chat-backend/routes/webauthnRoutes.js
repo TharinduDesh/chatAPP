@@ -6,7 +6,6 @@ const {
   generateAuthenticationOptions,
   verifyAuthenticationResponse,
 } = require("@simplewebauthn/server");
-// We no longer need the isoUint8Array helper
 const Admin = require("../models/Admin");
 const Authenticator = require("../models/Authenticator");
 const Challenge = require("../models/Challenge");
@@ -36,7 +35,6 @@ router.post("/register-options", async (req, res) => {
       userName: user.email,
       attestationType: "none",
       excludeCredentials: userAuthenticators.map((auth) => ({
-        // FIX: Use Node.js Buffer to convert from Base64URL
         id: Buffer.from(auth.credentialID, "base64url"),
         type: "public-key",
         transports: auth.transports,
@@ -89,11 +87,10 @@ router.post("/verify-registration", async (req, res) => {
       requireUserVerification: false,
     });
 
-    if (verification.verified) {
+    if (verification.verified && verification.registrationInfo) {
       const { registrationInfo } = verification;
       const newAuthenticator = new Authenticator({
         userId,
-        // FIX: Use Node.js Buffer to convert to Base64URL
         credentialID: Buffer.from(registrationInfo.credentialID).toString(
           "base64url"
         ),
@@ -101,9 +98,15 @@ router.post("/verify-registration", async (req, res) => {
           registrationInfo.credentialPublicKey
         ).toString("base64url"),
         counter: registrationInfo.counter,
-        transports: cred.response.transports,
+        // FIX: Use the correct method to get transports
+        transports: cred.response.getTransports(),
       });
       await newAuthenticator.save();
+    } else {
+      // If verification is true but registrationInfo is missing, something is wrong.
+      return res
+        .status(400)
+        .json({ message: "Could not verify authenticator." });
     }
 
     await expectedChallenge.deleteOne();
@@ -132,7 +135,6 @@ router.post("/auth-options", async (req, res) => {
     const options = await generateAuthenticationOptions({
       rpID,
       allowCredentials: userAuthenticators.map((auth) => ({
-        // FIX: Use Node.js Buffer to convert from Base64URL
         id: Buffer.from(auth.credentialID, "base64url"),
         type: "public-key",
         transports: auth.transports,
@@ -181,7 +183,6 @@ router.post("/verify-authentication", async (req, res) => {
       expectedOrigin: origin,
       expectedRPID: rpID,
       authenticator: {
-        // FIX: Use Node.js Buffer to convert from Base64URL
         credentialID: Buffer.from(authenticator.credentialID, "base64url"),
         credentialPublicKey: Buffer.from(
           authenticator.credentialPublicKey,
