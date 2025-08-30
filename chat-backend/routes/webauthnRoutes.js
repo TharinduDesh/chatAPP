@@ -89,12 +89,15 @@ router.post("/verify-registration", async (req, res) => {
     if (verification.verified && verification.registrationInfo) {
       const registrationInfo = verification.registrationInfo;
 
-      // Debug log to see what’s inside
-      console.log("✅ RegistrationInfo:", registrationInfo);
-
-      const credentialID = registrationInfo.credentialID;
-      const credentialPublicKey = registrationInfo.credentialPublicKey;
-      const counter = registrationInfo.counter;
+      // ✅ Save credential.id and credential.publicKey as base64url strings
+      const credentialID = Buffer.from(registrationInfo.credential.id).toString(
+        "base64url"
+      );
+      const credentialPublicKey = Buffer.from(
+        registrationInfo.credential.publicKey
+      ).toString("base64url");
+      const counter = registrationInfo.credential.counter || 0;
+      const transports = registrationInfo.credential.transports || ["internal"];
 
       if (!credentialID || !credentialPublicKey) {
         return res.status(500).json({
@@ -104,10 +107,10 @@ router.post("/verify-registration", async (req, res) => {
 
       const newAuthenticator = new Authenticator({
         userId: mongoose.Types.ObjectId(userId),
-        credentialID, // already Buffer
-        credentialPublicKey, // already Buffer
-        counter: counter || 0,
-        transports: ["internal"],
+        credentialID,
+        credentialPublicKey,
+        counter,
+        transports,
       });
 
       await newAuthenticator.save();
