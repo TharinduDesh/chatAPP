@@ -30,11 +30,11 @@ router.post("/register-options", async (req, res) => {
     const options = await generateRegistrationOptions({
       rpName: "ChatApp Admin",
       rpID,
-      userID: Buffer.from(user._id.toString()), // Buffer for userID
+      userID: Buffer.from(user._id.toString()),
       userName: user.email,
       attestationType: "none",
       excludeCredentials: userAuthenticators.map((auth) => ({
-        id: auth.credentialID, // Use Buffer directly
+        id: Buffer.from(auth.credentialID, "base64url"), // Convert back to Buffer for exclusion
         type: "public-key",
         transports: auth.transports,
       })),
@@ -92,40 +92,17 @@ router.post("/verify-registration", async (req, res) => {
         });
       }
 
-      // DEBUG: Log what we're getting from the registration
-      console.log("Raw credential.id:", credential.id);
-      console.log("Raw credential.id type:", typeof credential.id);
-
-      if (credential.id instanceof Uint8Array) {
-        console.log("Credential.id is Uint8Array");
-      } else if (credential.id instanceof ArrayBuffer) {
-        console.log("Credential.id is ArrayBuffer");
-      }
-
-      // Store the credential ID exactly as received (as Buffer)
-      // The credential.id should be an ArrayBuffer or Uint8Array
-      let credentialIDBuffer;
-      if (credential.id instanceof ArrayBuffer) {
-        credentialIDBuffer = Buffer.from(credential.id);
-      } else if (credential.id instanceof Uint8Array) {
-        credentialIDBuffer = Buffer.from(credential.id.buffer);
-      } else {
-        // If it's already a Buffer or something else
-        credentialIDBuffer = Buffer.from(credential.id);
-      }
-
-      console.log(
-        "Storing credentialID as:",
-        credentialIDBuffer.toString("base64")
-      );
-
+      // Store the credential ID EXACTLY as it comes (as string)
+      const credentialID = credential.id; // This is already a base64url string
       const credentialPublicKey = Buffer.from(credential.publicKey);
       const counter = registrationInfo.counter || 0;
       const transports = cred.response.transports || ["internal"];
 
+      console.log("Storing credentialID as string:", credentialID);
+
       const newAuthenticator = new Authenticator({
         userId: new mongoose.Types.ObjectId(userId),
-        credentialID: credentialIDBuffer,
+        credentialID, // Store as string
         credentialPublicKey,
         counter,
         transports,
@@ -183,61 +160,26 @@ router.post("/verify-authentication", async (req, res) => {
         .json({ message: "Challenge not found or expired" });
     }
 
-    // Convert incoming credential ID to the same format as stored
-    let incomingCredentialID;
-    if (typeof cred.id === "string") {
-      // The incoming credential ID is base64url encoded
-      incomingCredentialID = cred.id;
+    // Use the credential ID exactly as it comes
+    const incomingCredentialID = cred.id;
+    console.log("Incoming credentialID:", incomingCredentialID);
 
-      // Convert base64url to base64 for comparison with stored value
-      let base64CredentialID = incomingCredentialID
-        .replace(/-/g, "+")
-        .replace(/_/g, "/");
-
-      // Add padding if needed
-      const pad = base64CredentialID.length % 4;
-      if (pad) {
-        if (pad === 1) {
-          base64CredentialID += "===";
-        } else if (pad === 2) {
-          base64CredentialID += "==";
-        } else {
-          base64CredentialID += "=";
-        }
-      }
-
-      incomingCredentialID = base64CredentialID;
-    } else {
-      console.error("Unknown cred.id type:", typeof cred.id, cred.id);
-      return res.status(400).json({ message: "Invalid credential ID format" });
-    }
-
-    console.log(
-      "Incoming credentialID (converted to base64):",
-      incomingCredentialID
-    );
-
-    // Find authenticator by comparing the converted base64 strings
-    const allAuthenticators = await Authenticator.find({});
-    let authenticator = null;
-
-    for (const auth of allAuthenticators) {
-      // Convert stored Buffer to base64 string for comparison
-      const storedCredentialID = auth.credentialID.toString("base64");
-      console.log(
-        "Comparing stored:",
-        storedCredentialID,
-        "with incoming:",
-        incomingCredentialID
-      );
-
-      if (storedCredentialID === incomingCredentialID) {
-        authenticator = auth;
-        break;
-      }
-    }
+    // Find authenticator by comparing strings directly
+    const authenticator = await Authenticator.findOne({
+      credentialID: incomingCredentialID,
+    });
 
     if (!authenticator) {
+      // Debug: log all stored credential IDs
+      const allAuthenticators = await Authenticator.find({});
+      console.log(
+        "All stored authenticators:",
+        allAuthenticators.map((auth) => ({
+          credentialID: auth.credentialID,
+          userId: auth.userId,
+        }))
+      );
+
       return res.status(404).json({
         message: "Authenticator not found. Please register this device first.",
       });
@@ -245,18 +187,24 @@ router.post("/verify-authentication", async (req, res) => {
 
     console.log(
       "Found authenticator with credentialID:",
-      authenticator.credentialID.toString("base64")
+      authenticator.credentialID
     );
 
-    // Verify authentication - use the Buffer objects directly
+    // For verification, we need to convert back to Buffer
+    const credentialIDBuffer = Buffer.from(
+      authenticator.credentialID,
+      "base64url"
+    );
+
+    // Verify authentication
     const verification = await verifyAuthenticationResponse({
       response: cred,
       expectedChallenge: challengeFromResponse,
       expectedOrigin: origin,
       expectedRPID: rpID,
       authenticator: {
-        credentialID: authenticator.credentialID, // Use Buffer directly
-        credentialPublicKey: authenticator.credentialPublicKey, // Use Buffer directly
+        credentialID: credentialIDBuffer,
+        credentialPublicKey: authenticator.credentialPublicKey,
         counter: authenticator.counter,
         transports: authenticator.transports,
       },

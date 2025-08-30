@@ -8,12 +8,12 @@ const AuthenticatorSchema = new mongoose.Schema({
     required: true,
   },
   credentialID: {
-    type: Buffer, // ✅ store as Buffer
+    type: String, // ✅ Change from Buffer to String
     required: true,
     unique: true,
   },
   credentialPublicKey: {
-    type: Buffer, // ✅ store as Buffer
+    type: Buffer, // Keep this as Buffer
     required: true,
   },
   counter: {
