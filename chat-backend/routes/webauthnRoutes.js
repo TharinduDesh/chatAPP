@@ -37,7 +37,8 @@ router.post("/register-options", async (req, res) => {
       userName: user.email,
       attestationType: "none",
       excludeCredentials: userAuthenticators.map((auth) => ({
-        id: isoUint8Array.fromBase64(auth.credentialID),
+        // --- FIX: Use fromBase64url ---
+        id: isoUint8Array.fromBase64url(auth.credentialID),
         type: "public-key",
         transports: auth.transports,
       })),
@@ -61,13 +62,11 @@ router.post("/verify-registration", async (req, res) => {
   const { userId, cred } = req.body;
 
   try {
-    // --- FIX START: Correctly parse the challenge from the client response ---
     const clientDataJSON = Buffer.from(
       cred.response.clientDataJSON,
       "base64"
     ).toString("utf8");
     const challengeFromResponse = JSON.parse(clientDataJSON).challenge;
-    // --- FIX END ---
 
     const user = await Admin.findById(userId);
     if (!user) {
@@ -95,8 +94,9 @@ router.post("/verify-registration", async (req, res) => {
       const { registrationInfo } = verification;
       const newAuthenticator = new Authenticator({
         userId,
-        credentialID: isoUint8Array.toBase64(registrationInfo.credentialID),
-        credentialPublicKey: isoUint8Array.toBase64(
+        // --- FIX: Use toBase64url ---
+        credentialID: isoUint8Array.toBase64url(registrationInfo.credentialID),
+        credentialPublicKey: isoUint8Array.toBase64url(
           registrationInfo.credentialPublicKey
         ),
         counter: registrationInfo.counter,
@@ -131,7 +131,8 @@ router.post("/auth-options", async (req, res) => {
     const options = await generateAuthenticationOptions({
       rpID,
       allowCredentials: userAuthenticators.map((auth) => ({
-        id: isoUint8Array.fromBase64(auth.credentialID),
+        // --- FIX: Use fromBase64url ---
+        id: isoUint8Array.fromBase64url(auth.credentialID),
         type: "public-key",
         transports: auth.transports,
       })),
@@ -151,13 +152,11 @@ router.post("/verify-authentication", async (req, res) => {
   const { cred } = req.body;
 
   try {
-    // --- FIX START: Correctly parse the challenge from the client response ---
     const clientDataJSON = Buffer.from(
       cred.response.clientDataJSON,
       "base64"
     ).toString("utf8");
     const challengeFromResponse = JSON.parse(clientDataJSON).challenge;
-    // --- FIX END ---
 
     const expectedChallenge = await Challenge.findOne({
       challenge: challengeFromResponse,
@@ -181,8 +180,9 @@ router.post("/verify-authentication", async (req, res) => {
       expectedOrigin: origin,
       expectedRPID: rpID,
       authenticator: {
-        credentialID: isoUint8Array.fromBase64(authenticator.credentialID),
-        credentialPublicKey: isoUint8Array.fromBase64(
+        // --- FIX: Use fromBase64url ---
+        credentialID: isoUint8Array.fromBase64url(authenticator.credentialID),
+        credentialPublicKey: isoUint8Array.fromBase64url(
           authenticator.credentialPublicKey
         ),
         counter: authenticator.counter,
