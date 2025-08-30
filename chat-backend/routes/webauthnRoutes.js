@@ -128,36 +128,39 @@ router.post("/auth-options", async (req, res) => {
   try {
     const { email } = req.body;
 
-    if (!email) {
-      return res.status(400).json({ message: "Email is required" });
-    }
+    if (!email) return res.status(400).json({ message: "Email is required" });
 
     const admin = await Admin.findOne({ email });
-    if (!admin) {
-      return res.status(404).json({ message: "Admin not found" });
-    }
+    if (!admin) return res.status(404).json({ message: "Admin not found" });
 
     const authenticators = await Authenticator.find({ userId: admin._id });
 
-    // Build allowCredentials array for the authenticators
-    const allowCredentials = authenticators.map((auth) => ({
-      id: Buffer.from(auth.credentialID, "base64url"), // convert base64url string to buffer
-      type: "public-key",
-      transports: auth.transports || ["internal"],
-    }));
+    const allowCredentials = authenticators.map((auth) => {
+      let credId = auth.credentialID;
 
-    // Generate options for WebAuthn login
-    const options = generateAuthenticationOptions({
-      userVerification: "preferred",
-      allowCredentials,
-      rpID: process.env.RP_ID, // e.g., 'sltchatapp1.netlify.app'
+      // If credentialID is stored as object, extract base64
+      if (credId && credId.toString) {
+        credId = credId.toString();
+      }
+
+      return {
+        id: Buffer.from(credId, "base64url"),
+        type: "public-key",
+        transports: auth.transports || ["internal"],
+      };
     });
 
-    if (!options.challenge) {
-      throw new Error("Failed to generate challenge");
+    const options = generateAuthenticationOptions({
+      userVerification: "preferred",
+      allowCredentials: allowCredentials.length ? allowCredentials : undefined,
+      rpID: process.env.RP_ID || "sltchatapp1.netlify.app",
+    });
+
+    if (!options || !options.challenge) {
+      return res.status(500).json({ message: "Failed to generate challenge" });
     }
 
-    // Save the challenge to DB (as base64url string)
+    // Save challenge as base64url string
     await Challenge.create({
       userId: admin._id,
       challenge: options.challenge.toString("base64url"),
