@@ -35,14 +35,14 @@ router.post("/register-options", async (req, res) => {
       userName: user.email,
       attestationType: "none",
       excludeCredentials: userAuthenticators.map((auth) => ({
-        id: auth.credentialID,
+        // FIX: Convert string ID from DB back to a Buffer for the browser
+        id: Buffer.from(auth.credentialID, "base64url"),
         type: "public-key",
         transports: auth.transports,
       })),
-      // --- THE FIX: Revert to preferring a synced Google Account Passkey ---
       authenticatorSelection: {
         authenticatorAttachment: "platform",
-        residentKey: "preferred", // This enables the Google Sync prompt
+        residentKey: "preferred",
         userVerification: "required",
       },
     });
@@ -142,7 +142,8 @@ router.post("/auth-options", async (req, res) => {
     const options = await generateAuthenticationOptions({
       rpID,
       allowCredentials: userAuthenticators.map((auth) => ({
-        id: auth.credentialID,
+        // FIX: Convert string ID from DB back to a Buffer for the browser
+        id: Buffer.from(auth.credentialID, "base64url"),
         type: "public-key",
         transports: auth.transports,
       })),
