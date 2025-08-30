@@ -7,6 +7,7 @@ const {
   generateAuthenticationOptions,
   verifyAuthenticationResponse,
 } = require("@simplewebauthn/server");
+
 const Admin = require("../models/Admin");
 const Authenticator = require("../models/Authenticator");
 const Challenge = require("../models/Challenge");
@@ -17,9 +18,9 @@ const router = express.Router();
 const rpID = "sltchatapp1.netlify.app";
 const origin = `https://${rpID}`;
 
-// ---------------------
+// ------------------------
 // [POST] /register-options
-// ---------------------
+// ------------------------
 router.post("/register-options", async (req, res) => {
   const { email } = req.body;
 
@@ -32,13 +33,13 @@ router.post("/register-options", async (req, res) => {
     const options = generateRegistrationOptions({
       rpName: "ChatApp Admin",
       rpID,
-      userID: user._id, // now supports ObjectId
+      userID: user._id.toString(), // Must be string
       userName: user.email,
       attestationType: "none",
       excludeCredentials: userAuthenticators.map((auth) => ({
         id: Buffer.from(auth.credentialID, "base64url"),
         type: "public-key",
-        transports: auth.transports,
+        transports: auth.transports || ["internal"],
       })),
       authenticatorSelection: {
         residentKey: "required",
@@ -54,9 +55,9 @@ router.post("/register-options", async (req, res) => {
   }
 });
 
-// ---------------------
+// ------------------------
 // [POST] /verify-registration
-// ---------------------
+// ------------------------
 router.post("/verify-registration", async (req, res) => {
   const { userId, cred } = req.body;
 
@@ -97,13 +98,13 @@ router.post("/verify-registration", async (req, res) => {
       }
 
       const newAuthenticator = new Authenticator({
-        userId: new mongoose.Types.ObjectId(userId),
+        userId: mongoose.Types.ObjectId(userId),
         credentialID: Buffer.from(credential.id).toString("base64url"),
         credentialPublicKey: Buffer.from(credential.publicKey).toString(
           "base64url"
         ),
         counter: registrationInfo.counter || 0,
-        transports: registrationInfo.transports || ["internal"],
+        transports: cred.transports || ["internal"],
       });
       await newAuthenticator.save();
     } else {
@@ -120,48 +121,43 @@ router.post("/verify-registration", async (req, res) => {
   }
 });
 
-// ---------------------
+// ------------------------
 // [POST] /auth-options
-// ---------------------
+// ------------------------
 router.post("/auth-options", async (req, res) => {
-  const { email } = req.body; // email must be sent from frontend
-  try {
-    if (!email) return res.status(400).json({ message: "Email is required" });
+  const { email } = req.body;
 
+  try {
     const user = await Admin.findOne({ email });
-    if (!user) return res.status(404).json({ message: "Admin not found" });
+    if (!user) return res.status(404).json({ message: "User not found" });
 
     const authenticators = await Authenticator.find({ userId: user._id });
+
+    const allowCredentials = authenticators
+      .filter((auth) => auth.credentialID)
+      .map((auth) => ({
+        id: Buffer.from(auth.credentialID, "base64url"),
+        type: "public-key",
+        transports: auth.transports || ["internal"],
+      }));
 
     const options = generateAuthenticationOptions({
       rpID,
       userVerification: "preferred",
-      allowCredentials: authenticators.map((auth) => ({
-        id: Buffer.from(auth.credentialID, "base64url"),
-        type: "public-key",
-        transports: auth.transports || ["internal"],
-      })),
+      allowCredentials,
     });
 
-    // Convert challenge to string for DB
-    const challengeStr =
-      typeof options.challenge === "string"
-        ? options.challenge
-        : Buffer.from(options.challenge).toString("base64url");
-
-    await Challenge.create({ challenge: challengeStr });
-
-    // Send options to browser
-    res.json({ ...options, challenge: challengeStr });
+    await Challenge.create({ challenge: options.challenge });
+    res.json(options);
   } catch (error) {
-    console.error(`Error in /auth-options:`, error);
+    console.error("Error in /auth-options:", error);
     res.status(500).json({ message: "Server error" });
   }
 });
 
-// ---------------------
+// ------------------------
 // [POST] /verify-authentication
-// ---------------------
+// ------------------------
 router.post("/verify-authentication", async (req, res) => {
   const { cred } = req.body;
 
@@ -181,12 +177,14 @@ router.post("/verify-authentication", async (req, res) => {
         .json({ message: "Challenge not found or expired" });
 
     const authenticator = await Authenticator.findOne({
-      credentialID: Buffer.from(cred.id).toString("base64url"),
+      credentialID: cred.id ? Buffer.from(cred.id).toString("base64url") : null,
     });
-    if (!authenticator)
+
+    if (!authenticator) {
       return res.status(404).json({
         message: "Authenticator not found. Please register this device first.",
       });
+    }
 
     const verification = await verifyAuthenticationResponse({
       response: cred,
@@ -200,7 +198,7 @@ router.post("/verify-authentication", async (req, res) => {
           "base64url"
         ),
         counter: authenticator.counter,
-        transports: authenticator.transports || ["internal"],
+        transports: authenticator.transports,
       },
       requireUserVerification: false,
     });
