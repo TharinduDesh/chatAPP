@@ -90,7 +90,6 @@ router.post("/verify-registration", async (req, res) => {
     if (verification.verified && verification.registrationInfo) {
       const { registrationInfo } = verification;
 
-      // --- THE FIX: Access the nested credential object ---
       const { credential } = registrationInfo;
       if (!credential || !credential.id || !credential.publicKey) {
         console.error(
@@ -106,13 +105,13 @@ router.post("/verify-registration", async (req, res) => {
 
       const newAuthenticator = new Authenticator({
         userId,
-        // Use the data from the nested credential object
         credentialID: Buffer.from(credential.id).toString("base64url"),
         credentialPublicKey: Buffer.from(credential.publicKey).toString(
           "base64url"
         ),
         counter: registrationInfo.counter,
-        transports: cred.response.getTransports(),
+        // --- THE FIX: Use the correct property to get transport info ---
+        transports: [registrationInfo.credentialDeviceType],
       });
       await newAuthenticator.save();
     } else {
@@ -187,7 +186,6 @@ router.post("/verify-authentication", async (req, res) => {
     }
 
     const authenticator = await Authenticator.findOne({
-      // FIX: cred.id is already Base64URL, no need to convert
       credentialID: cred.id,
     });
     if (!authenticator) {
