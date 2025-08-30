@@ -16,9 +16,7 @@ const router = express.Router();
 const rpID = "sltchatapp1.netlify.app";
 const origin = `https://sltchatapp1.netlify.app`;
 
-/**
- * [POST] /api/webauthn/register-options
- */
+// [POST] /api/webauthn/register-options
 router.post("/register-options", async (req, res) => {
   const { email } = req.body;
 
@@ -33,11 +31,11 @@ router.post("/register-options", async (req, res) => {
     const options = await generateRegistrationOptions({
       rpName: "ChatApp Admin",
       rpID,
-      userID: user._id.toString(),
+      userID: Buffer.from(user._id.toString()), // ✅ FIX: must be Buffer
       userName: user.email,
       attestationType: "none",
       excludeCredentials: userAuthenticators.map((auth) => ({
-        id: auth.credentialID,
+        id: auth.credentialID, // already Buffer in your fixed schema
         type: "public-key",
         transports: auth.transports,
       })),
