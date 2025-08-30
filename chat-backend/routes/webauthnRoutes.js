@@ -35,7 +35,8 @@ router.post("/register-options", async (req, res) => {
       userName: user.email,
       attestationType: "none",
       excludeCredentials: userAuthenticators.map((auth) => ({
-        id: Buffer.from(auth.credentialID, "base64url"),
+        // --- FIX: Pass the raw string from the DB ---
+        id: auth.credentialID,
         type: "public-key",
         transports: auth.transports,
       })),
@@ -109,7 +110,6 @@ router.post("/verify-registration", async (req, res) => {
         credentialPublicKey: Buffer.from(credential.publicKey).toString(
           "base64url"
         ),
-        // --- THE FIX: Default to 0 if the counter is missing ---
         counter: registrationInfo.counter || 0,
         transports: [registrationInfo.credentialDeviceType],
       });
@@ -150,7 +150,8 @@ router.post("/auth-options", async (req, res) => {
     const options = await generateAuthenticationOptions({
       rpID,
       allowCredentials: userAuthenticators.map((auth) => ({
-        id: Buffer.from(auth.credentialID, "base64url"),
+        // --- FIX: Pass the raw string from the DB ---
+        id: auth.credentialID,
         type: "public-key",
         transports: auth.transports,
       })),
@@ -198,6 +199,7 @@ router.post("/verify-authentication", async (req, res) => {
       expectedOrigin: origin,
       expectedRPID: rpID,
       authenticator: {
+        // This function REQUIRES buffers, so we keep the conversion here
         credentialID: Buffer.from(authenticator.credentialID, "base64url"),
         credentialPublicKey: Buffer.from(
           authenticator.credentialPublicKey,
