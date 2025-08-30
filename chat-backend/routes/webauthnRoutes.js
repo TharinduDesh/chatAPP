@@ -183,43 +183,61 @@ router.post("/verify-authentication", async (req, res) => {
         .json({ message: "Challenge not found or expired" });
     }
 
-    // Convert incoming credential ID to Buffer for comparison
-    let incomingCredentialIDBuffer;
+    // Convert incoming credential ID to the same format as stored
+    let incomingCredentialID;
     if (typeof cred.id === "string") {
-      // If it's a base64url string, convert to Buffer
-      incomingCredentialIDBuffer = Buffer.from(cred.id, "base64url");
-    } else if (cred.id instanceof ArrayBuffer) {
-      // If it's an ArrayBuffer, convert to Buffer
-      incomingCredentialIDBuffer = Buffer.from(cred.id);
-    } else if (cred.id instanceof Uint8Array) {
-      // If it's a Uint8Array, convert to Buffer
-      incomingCredentialIDBuffer = Buffer.from(cred.id.buffer);
+      // The incoming credential ID is base64url encoded
+      incomingCredentialID = cred.id;
+
+      // Convert base64url to base64 for comparison with stored value
+      let base64CredentialID = incomingCredentialID
+        .replace(/-/g, "+")
+        .replace(/_/g, "/");
+
+      // Add padding if needed
+      const pad = base64CredentialID.length % 4;
+      if (pad) {
+        if (pad === 1) {
+          base64CredentialID += "===";
+        } else if (pad === 2) {
+          base64CredentialID += "==";
+        } else {
+          base64CredentialID += "=";
+        }
+      }
+
+      incomingCredentialID = base64CredentialID;
     } else {
       console.error("Unknown cred.id type:", typeof cred.id, cred.id);
       return res.status(400).json({ message: "Invalid credential ID format" });
     }
 
     console.log(
-      "Incoming credentialID (Buffer):",
-      incomingCredentialIDBuffer.toString("base64")
+      "Incoming credentialID (converted to base64):",
+      incomingCredentialID
     );
 
-    // Find authenticator by comparing Buffer objects
-    const authenticator = await Authenticator.findOne({
-      credentialID: incomingCredentialIDBuffer,
-    });
+    // Find authenticator by comparing the converted base64 strings
+    const allAuthenticators = await Authenticator.find({});
+    let authenticator = null;
 
-    if (!authenticator) {
-      // Debug: log all stored credential IDs
-      const allAuthenticators = await Authenticator.find({});
+    for (const auth of allAuthenticators) {
+      // Convert stored Buffer to base64 string for comparison
+      const storedCredentialID = auth.credentialID.toString("base64");
       console.log(
-        "All stored authenticators:",
-        allAuthenticators.map((auth) => ({
-          credentialID: auth.credentialID.toString("base64"),
-          userId: auth.userId,
-        }))
+        "Comparing stored:",
+        storedCredentialID,
+        "with incoming:",
+        incomingCredentialID
       );
 
+      if (storedCredentialID === incomingCredentialID) {
+        authenticator = auth;
+        break;
+      }
+    }
+
+    if (!authenticator) {
       return res.status(404).json({
         message: "Authenticator not found. Please register this device first.",
       });
