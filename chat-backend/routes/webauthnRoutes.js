@@ -139,6 +139,7 @@ router.post("/auth-options", async (req, res) => {
 });
 
 // ---------------- VERIFY AUTHENTICATION ----------------
+// [POST] /api/webauthn/verify-authentication
 router.post("/verify-authentication", async (req, res) => {
   const { cred } = req.body;
 
@@ -152,26 +153,41 @@ router.post("/verify-authentication", async (req, res) => {
     const expectedChallenge = await Challenge.findOne({
       challenge: challengeFromResponse,
     });
-    if (!expectedChallenge)
+    if (!expectedChallenge) {
       return res
         .status(400)
         .json({ message: "Challenge not found or expired" });
+    }
 
-    // Convert incoming cred.id to base64url string
-    const credentialIDBase64 = Buffer.from(cred.id, "base64url").toString(
-      "base64url"
-    );
+    // ---- Handle cred.id correctly ----
+    let credentialID;
+    if (typeof cred.id === "string") {
+      credentialID = cred.id; // frontend sent string (base64url)
+    } else if (cred.id instanceof ArrayBuffer) {
+      credentialID = Buffer.from(new Uint8Array(cred.id)).toString("base64url"); // convert ArrayBuffer → base64url
+    } else {
+      console.error("Unknown cred.id type:", cred.id);
+      return res.status(400).json({ message: "Invalid credential ID format" });
+    }
 
-    const authenticator = await Authenticator.findOne({
-      credentialID: credentialIDBase64,
-    });
+    console.log("Incoming credentialID:", credentialID);
+
+    // Find the authenticator in DB
+    const authenticator = await Authenticator.findOne({ credentialID });
 
     if (!authenticator) {
+      console.log(
+        "Stored credentialIDs in DB:",
+        await Authenticator.find().select("credentialID")
+      );
       return res.status(404).json({
         message: "Authenticator not found. Please register this device first.",
       });
     }
 
+    console.log("Found authenticator:", authenticator);
+
+    // Verify authentication
     const verification = await verifyAuthenticationResponse({
       response: cred,
       expectedChallenge: challengeFromResponse,
