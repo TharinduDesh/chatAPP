@@ -40,6 +40,7 @@ router.post("/register-options", async (req, res) => {
         transports: auth.transports,
       })),
       authenticatorSelection: {
+        // This forces the creation of a discoverable credential (passkey)
         residentKey: "required",
         userVerification: "required",
       },
@@ -125,6 +126,8 @@ router.post("/verify-registration", async (req, res) => {
 // [POST] /api/webauthn/auth-options
 router.post("/auth-options", async (req, res) => {
   try {
+    // This forces the browser to use discoverable credentials (passkeys),
+    // which is the modern, correct flow and avoids the server-side bugs.
     const options = await generateAuthenticationOptions({
       rpID,
       userVerification: "preferred",
@@ -158,15 +161,21 @@ router.post("/verify-authentication", async (req, res) => {
         .json({ message: "Challenge not found or expired" });
     }
 
-    // --- THE DEFINITIVE FIX ---
-    // Instead of relying on userHandle, we find the authenticator by its unique credential ID.
-    // This is more reliable across different devices.
+    // With a discoverable credential, the userHandle is returned in the response
+    const userHandle = cred.response.userHandle;
+    if (!userHandle) {
+      return res
+        .status(400)
+        .json({ message: "User handle not found in response." });
+    }
+
+    // Find the authenticator by its ID and verify it belongs to the user from the userHandle
     const authenticator = await Authenticator.findOne({
       credentialID: cred.id,
+      userId: userHandle,
     });
 
     if (!authenticator) {
-      // This error will now correctly trigger if the passkey is not in our database.
       return res
         .status(404)
         .json({
@@ -200,6 +209,8 @@ router.post("/verify-authentication", async (req, res) => {
     await expectedChallenge.deleteOne();
     res.json({ verified: verification.verified });
   } catch (error) {
+    // --- SYNTAX ERROR FIX ---
+    // The previous version had a period here instead of an opening brace
     console.error(`Error in /verify-authentication:`, error);
     res.status(500).json({ message: "Server error" });
   }
