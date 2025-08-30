@@ -121,7 +121,6 @@ router.post("/verify-registration", async (req, res) => {
 });
 
 // [POST] /api/webauthn/auth-options
-// [POST] /api/webauthn/auth-options
 router.post("/auth-options", async (req, res) => {
   const { email } = req.body; // Get email from request
 
@@ -136,7 +135,7 @@ router.post("/auth-options", async (req, res) => {
     const options = await generateAuthenticationOptions({
       rpID,
       allowCredentials: userAuthenticators.map((auth) => ({
-        id: Buffer.from(auth.credentialID, "base64url"), // Convert stored credential ID to Buffer
+        id: auth.credentialID, // Use the stored credential ID directly (already base64url)
         type: "public-key",
         transports: auth.transports,
       })),
@@ -177,13 +176,10 @@ router.post("/verify-authentication", async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // Convert the incoming credential ID to base64url format for comparison
-    const incomingCredentialID = cred.id;
-
     // Find authenticator by user ID and credential ID
     const authenticator = await Authenticator.findOne({
       userId: user._id,
-      credentialID: incomingCredentialID,
+      credentialID: cred.id, // Use the credential ID directly
     });
 
     if (!authenticator) {
