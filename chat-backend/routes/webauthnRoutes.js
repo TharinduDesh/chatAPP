@@ -34,7 +34,7 @@ router.post("/register-options", async (req, res) => {
       userName: user.email,
       attestationType: "none",
       excludeCredentials: userAuthenticators.map((auth) => ({
-        id: Buffer.from(auth.credentialID, "base64url"),
+        id: auth.credentialID, // Use Buffer directly
         type: "public-key",
         transports: auth.transports,
       })),
@@ -92,12 +92,11 @@ router.post("/verify-registration", async (req, res) => {
         });
       }
 
-      const credentialID = Buffer.from(credential.id).toString("base64url");
-      const credentialPublicKey = Buffer.from(credential.publicKey).toString(
-        "base64url"
-      );
-      const counter = credential.counter || 0;
-      const transports = credential.transports || ["internal"];
+      // Store as Buffer objects (matching your schema)
+      const credentialID = Buffer.from(credential.id);
+      const credentialPublicKey = Buffer.from(credential.publicKey);
+      const counter = registrationInfo.counter || 0;
+      const transports = cred.response.transports || ["internal"];
 
       const newAuthenticator = new Authenticator({
         userId: new mongoose.Types.ObjectId(userId),
@@ -139,7 +138,6 @@ router.post("/auth-options", async (req, res) => {
 });
 
 // ---------------- VERIFY AUTHENTICATION ----------------
-// [POST] /api/webauthn/verify-authentication
 router.post("/verify-authentication", async (req, res) => {
   const { cred } = req.body;
 
@@ -159,46 +157,57 @@ router.post("/verify-authentication", async (req, res) => {
         .json({ message: "Challenge not found or expired" });
     }
 
-    // ---- Handle cred.id correctly ----
-    let credentialID;
+    // Convert incoming credential ID to Buffer for comparison
+    let incomingCredentialIDBuffer;
     if (typeof cred.id === "string") {
-      credentialID = cred.id; // frontend sent string (base64url)
+      // If it's a base64url string, convert to Buffer
+      incomingCredentialIDBuffer = Buffer.from(cred.id, "base64url");
     } else if (cred.id instanceof ArrayBuffer) {
-      credentialID = Buffer.from(new Uint8Array(cred.id)).toString("base64url"); // convert ArrayBuffer → base64url
+      // If it's an ArrayBuffer, convert to Buffer
+      incomingCredentialIDBuffer = Buffer.from(cred.id);
     } else {
       console.error("Unknown cred.id type:", cred.id);
       return res.status(400).json({ message: "Invalid credential ID format" });
     }
 
-    console.log("Incoming credentialID:", credentialID);
+    console.log("Incoming credentialID (Buffer):", incomingCredentialIDBuffer);
 
-    // Find the authenticator in DB
-    const authenticator = await Authenticator.findOne({ credentialID });
+    // Find authenticator by comparing Buffer objects
+    const authenticator = await Authenticator.findOne({
+      credentialID: incomingCredentialIDBuffer,
+    });
 
     if (!authenticator) {
+      // Debug: log all stored credential IDs
+      const allAuthenticators = await Authenticator.find({});
       console.log(
-        "Stored credentialIDs in DB:",
-        await Authenticator.find().select("credentialID")
+        "All stored authenticators:",
+        allAuthenticators.map((auth) => ({
+          credentialID: auth.credentialID.toString("base64url"),
+          userId: auth.userId,
+        }))
       );
+
       return res.status(404).json({
         message: "Authenticator not found. Please register this device first.",
       });
     }
 
-    console.log("Found authenticator:", authenticator);
+    console.log("Found authenticator:", {
+      credentialID: authenticator.credentialID.toString("base64url"),
+      userId: authenticator.userId,
+      counter: authenticator.counter,
+    });
 
-    // Verify authentication
+    // Verify authentication - use the Buffer objects directly
     const verification = await verifyAuthenticationResponse({
       response: cred,
       expectedChallenge: challengeFromResponse,
       expectedOrigin: origin,
       expectedRPID: rpID,
       authenticator: {
-        credentialID: Buffer.from(authenticator.credentialID, "base64url"),
-        credentialPublicKey: Buffer.from(
-          authenticator.credentialPublicKey,
-          "base64url"
-        ),
+        credentialID: authenticator.credentialID, // Use Buffer directly
+        credentialPublicKey: authenticator.credentialPublicKey, // Use Buffer directly
         counter: authenticator.counter,
         transports: authenticator.transports,
       },
