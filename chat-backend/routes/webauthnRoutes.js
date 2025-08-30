@@ -16,15 +16,6 @@ const router = express.Router();
 const rpID = "sltchatapp1.netlify.app";
 const origin = `https://sltchatapp1.netlify.app`;
 
-// Helper function to convert a Base64URL string to an ArrayBuffer
-const base64urlToArrayBuffer = (base64urlString) => {
-  const buffer = Buffer.from(base64urlString, "base64url");
-  return buffer.buffer.slice(
-    buffer.byteOffset,
-    buffer.byteOffset + buffer.byteLength
-  );
-};
-
 // [POST] /api/webauthn/register-options
 router.post("/register-options", async (req, res) => {
   const { email } = req.body;
@@ -44,7 +35,8 @@ router.post("/register-options", async (req, res) => {
       userName: user.email,
       attestationType: "none",
       excludeCredentials: userAuthenticators.map((auth) => ({
-        id: base64urlToArrayBuffer(auth.credentialID),
+        // Pass the raw string from the DB for this function
+        id: auth.credentialID,
         type: "public-key",
         transports: auth.transports,
       })),
@@ -158,7 +150,8 @@ router.post("/auth-options", async (req, res) => {
     const options = await generateAuthenticationOptions({
       rpID,
       allowCredentials: userAuthenticators.map((auth) => ({
-        id: base64urlToArrayBuffer(auth.credentialID),
+        // --- THE FIX: Pass the raw string from the DB for this function ---
+        id: auth.credentialID,
         type: "public-key",
         transports: auth.transports,
       })),
@@ -168,7 +161,7 @@ router.post("/auth-options", async (req, res) => {
     await Challenge.create({ challenge: options.challenge });
     res.json(options);
   } catch (error) {
-    console.error(error);
+    console.error(`Error in /auth-options:`, error);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -206,6 +199,7 @@ router.post("/verify-authentication", async (req, res) => {
       expectedOrigin: origin,
       expectedRPID: rpID,
       authenticator: {
+        // This function correctly requires Buffers, so we keep the conversion here
         credentialID: Buffer.from(authenticator.credentialID, "base64url"),
         credentialPublicKey: Buffer.from(
           authenticator.credentialPublicKey,
@@ -225,7 +219,7 @@ router.post("/verify-authentication", async (req, res) => {
     await expectedChallenge.deleteOne();
     res.json({ verified: verification.verified });
   } catch (error) {
-    console.error(error);
+    console.error(`Error in /verify-authentication:`, error);
     res.status(500).json({ message: "Server error" });
   }
 });
