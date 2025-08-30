@@ -87,22 +87,14 @@ router.post("/verify-registration", async (req, res) => {
       requireUserVerification: false,
     });
 
-    // --- NEW DEBUGGING LOG ---
-    console.log(
-      "Full verification object:",
-      JSON.stringify(verification, null, 2)
-    );
-
     if (verification.verified && verification.registrationInfo) {
       const { registrationInfo } = verification;
 
-      // --- ADDED DEFENSIVE CHECK ---
-      if (
-        !registrationInfo.credentialID ||
-        !registrationInfo.credentialPublicKey
-      ) {
+      // --- THE FIX: Access the nested credential object ---
+      const { credential } = registrationInfo;
+      if (!credential || !credential.id || !credential.publicKey) {
         console.error(
-          "Verification object is missing required credential data:",
+          "Verification object is missing required nested credential data:",
           registrationInfo
         );
         return res
@@ -114,12 +106,11 @@ router.post("/verify-registration", async (req, res) => {
 
       const newAuthenticator = new Authenticator({
         userId,
-        credentialID: Buffer.from(registrationInfo.credentialID).toString(
+        // Use the data from the nested credential object
+        credentialID: Buffer.from(credential.id).toString("base64url"),
+        credentialPublicKey: Buffer.from(credential.publicKey).toString(
           "base64url"
         ),
-        credentialPublicKey: Buffer.from(
-          registrationInfo.credentialPublicKey
-        ).toString("base64url"),
         counter: registrationInfo.counter,
         transports: cred.response.getTransports(),
       });
@@ -196,6 +187,7 @@ router.post("/verify-authentication", async (req, res) => {
     }
 
     const authenticator = await Authenticator.findOne({
+      // FIX: cred.id is already Base64URL, no need to convert
       credentialID: cred.id,
     });
     if (!authenticator) {
