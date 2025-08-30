@@ -100,7 +100,9 @@ router.post("/verify-registration", async (req, res) => {
 
       const newAuthenticator = new Authenticator({
         userId,
-        credentialID: Buffer.from(credential.id).toString("base64url"),
+        // --- THE DEFINITIVE FIX: Save the credential ID directly ---
+        // The library provides the ID in the correct Base64URL string format.
+        credentialID: credential.id,
         credentialPublicKey: Buffer.from(credential.publicKey).toString(
           "base64url"
         ),
@@ -158,10 +160,6 @@ router.post("/verify-authentication", async (req, res) => {
         .json({ message: "Challenge not found or expired" });
     }
 
-    // --- FINAL DEBUGGING STEP ---
-    // Log the credential ID received from the browser during the login attempt.
-    console.log("Attempting to find authenticator with cred.id:", cred.id);
-
     const authenticator = await Authenticator.findOne({
       credentialID: cred.id,
     });
@@ -180,7 +178,15 @@ router.post("/verify-authentication", async (req, res) => {
       expectedChallenge: challengeFromResponse,
       expectedOrigin: origin,
       expectedRPID: rpID,
-      authenticator,
+      authenticator: {
+        credentialID: Buffer.from(authenticator.credentialID, "base64url"),
+        credentialPublicKey: Buffer.from(
+          authenticator.credentialPublicKey,
+          "base64url"
+        ),
+        counter: authenticator.counter,
+        transports: authenticator.transports,
+      },
       requireUserVerification: false,
     });
 
