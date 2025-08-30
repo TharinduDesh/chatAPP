@@ -87,8 +87,14 @@ router.post("/verify-registration", async (req, res) => {
     });
 
     if (verification.verified && verification.registrationInfo) {
-      const { registrationInfo } = verification;
-      const { credentialPublicKey, credentialID, counter } = registrationInfo;
+      const registrationInfo = verification.registrationInfo;
+
+      // Debug log to see what’s inside
+      console.log("✅ RegistrationInfo:", registrationInfo);
+
+      const credentialID = registrationInfo.credentialID;
+      const credentialPublicKey = registrationInfo.credentialPublicKey;
+      const counter = registrationInfo.counter;
 
       if (!credentialID || !credentialPublicKey) {
         return res.status(500).json({
@@ -97,7 +103,7 @@ router.post("/verify-registration", async (req, res) => {
       }
 
       const newAuthenticator = new Authenticator({
-        userId: mongoose.Types.ObjectId(userId), // ✅ ensure ObjectId type
+        userId: mongoose.Types.ObjectId(userId),
         credentialID, // already Buffer
         credentialPublicKey, // already Buffer
         counter: counter || 0,
