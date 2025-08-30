@@ -10,50 +10,29 @@ const webauthnApi = axios.create({
   baseURL: `${API_BASE_URL}/api/webauthn`,
 });
 
-// ------------------- Utility -------------------
-// Convert ArrayBuffer to Base64URL
-function arrayBufferToBase64URL(buffer) {
-  let binary = "";
-  const bytes = new Uint8Array(buffer);
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
 // ------------------- REGISTER BIOMETRICS -------------------
 export const registerBiometrics = async (email, userId) => {
   try {
-    // 1️⃣ Get registration options from backend
+    // Get registration options from server
     const optionsResponse = await webauthnApi.post("/register-options", {
       email,
     });
 
-    // 2️⃣ Start registration with authenticator
-    const cred = await startRegistration(optionsResponse.data);
+    // Start registration in browser
+    const credential = await startRegistration(optionsResponse.data);
 
-    // 3️⃣ Convert id/rawId to Base64URL
-    const credId = arrayBufferToBase64URL(cred.rawId || cred.id);
-
-    // 4️⃣ Send to backend
+    // Send credential to server for verification
     const verificationResponse = await webauthnApi.post(
       "/verify-registration",
       {
         userId,
-        cred: {
-          ...cred,
-          id: credId,
-          rawId: credId,
-        },
+        cred: credential,
       }
     );
 
     return verificationResponse.data;
   } catch (error) {
-    console.error("Registration failed:", error);
+    console.error("Biometric registration failed:", error);
     throw error;
   }
 };
@@ -61,30 +40,24 @@ export const registerBiometrics = async (email, userId) => {
 // ------------------- LOGIN WITH BIOMETRICS -------------------
 export const loginWithBiometrics = async (email) => {
   try {
-    // 1️⃣ Get authentication options from backend
+    // Get authentication options from server
     const optionsResponse = await webauthnApi.post("/auth-options", { email });
 
-    // 2️⃣ Start authentication
-    const cred = await startAuthentication(optionsResponse.data);
+    // Start authentication in browser
+    const credential = await startAuthentication(optionsResponse.data);
 
-    // 3️⃣ Convert id/rawId to Base64URL
-    const credId = arrayBufferToBase64URL(cred.rawId || cred.id);
-
-    // 4️⃣ Send to backend
+    // Send credential to server for verification
     const verificationResponse = await webauthnApi.post(
       "/verify-authentication",
       {
-        cred: {
-          ...cred,
-          id: credId,
-          rawId: credId,
-        },
+        email,
+        cred: credential,
       }
     );
 
     return verificationResponse.data;
   } catch (error) {
-    console.error("Authentication failed:", error);
+    console.error("Biometric authentication failed:", error);
     throw error;
   }
 };
