@@ -146,9 +146,7 @@ router.post("/auth-options", async (req, res) => {
   }
 });
 
-/**
- * [POST] /api/webauthn/verify-authentication
- */
+// [POST] /api/webauthn/verify-authentication
 router.post("/verify-authentication", async (req, res) => {
   const { cred } = req.body;
 
@@ -169,7 +167,7 @@ router.post("/verify-authentication", async (req, res) => {
     }
 
     const authenticator = await Authenticator.findOne({
-      credentialID: Buffer.from(cred.id, "base64url"), // ✅ Lookup using Buffer
+      credentialID: cred.id, // match stored base64url string
     });
 
     if (!authenticator) {
@@ -184,8 +182,11 @@ router.post("/verify-authentication", async (req, res) => {
       expectedOrigin: origin,
       expectedRPID: rpID,
       authenticator: {
-        credentialID: authenticator.credentialID, // ✅ Already Buffer
-        credentialPublicKey: authenticator.credentialPublicKey, // ✅ Already Buffer
+        credentialID: Buffer.from(authenticator.credentialID, "base64url"), // convert back to Buffer
+        credentialPublicKey: Buffer.from(
+          authenticator.credentialPublicKey,
+          "base64url"
+        ), // convert back to Buffer
         counter: authenticator.counter,
         transports: authenticator.transports,
       },
