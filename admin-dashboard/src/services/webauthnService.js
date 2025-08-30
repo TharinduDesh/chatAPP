@@ -15,7 +15,7 @@ const webauthnApi = axios.create({
 // ---------------------
 export const registerBiometrics = async (email, userId) => {
   try {
-    // 1️⃣ Request registration options from server
+    // 1️⃣ Get registration options from server
     const optionsResponse = await webauthnApi.post("/register-options", {
       email,
     });
@@ -24,7 +24,7 @@ export const registerBiometrics = async (email, userId) => {
     // 2️⃣ Start registration in browser
     const cred = await startRegistration(options);
 
-    // 3️⃣ Send registration response to server for verification
+    // 3️⃣ Send registration response to server
     const verificationResponse = await webauthnApi.post(
       "/verify-registration",
       {
@@ -45,14 +45,14 @@ export const registerBiometrics = async (email, userId) => {
 // ---------------------
 export const loginWithBiometrics = async (email) => {
   try {
-    // 1️⃣ Request authentication options from server
+    // 1️⃣ Get authentication options from server
     const optionsResponse = await webauthnApi.post("/auth-options", { email });
     const options = optionsResponse.data;
 
     // 2️⃣ Start authentication in browser
     const cred = await startAuthentication(options);
 
-    // 3️⃣ Send authentication response to server for verification
+    // 3️⃣ Send authentication response to server
     const verificationResponse = await webauthnApi.post(
       "/verify-authentication",
       {
