@@ -7,36 +7,35 @@ const {
   generateAuthenticationOptions,
   verifyAuthenticationResponse,
 } = require("@simplewebauthn/server");
+
 const Admin = require("../models/Admin");
 const Authenticator = require("../models/Authenticator");
 const Challenge = require("../models/Challenge");
 
 const router = express.Router();
 
-// Make sure these match your Netlify deployment exactly
+// Make sure these match your deployment
 const rpID = "sltchatapp1.netlify.app";
-const origin = `https://sltchatapp1.netlify.app`;
+const origin = `https://${rpID}`;
 
-// [POST] /api/webauthn/register-options
+// ------------------- REGISTER OPTIONS -------------------
 router.post("/register-options", async (req, res) => {
   const { email } = req.body;
 
   try {
-    const user = await Admin.findOne({ email });
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
+    const user = await Admin.findOne({ email: email.toLowerCase() });
+    if (!user) return res.status(404).json({ message: "User not found" });
 
     const userAuthenticators = await Authenticator.find({ userId: user._id });
 
-    const options = await generateRegistrationOptions({
+    const options = generateRegistrationOptions({
       rpName: "ChatApp Admin",
       rpID,
-      userID: Buffer.from(user._id.toString()), // ✅ FIX: must be Buffer
+      userID: user._id.toString(), // must be string
       userName: user.email,
       attestationType: "none",
       excludeCredentials: userAuthenticators.map((auth) => ({
-        id: auth.credentialID, // already Buffer in your fixed schema
+        id: auth.credentialID, // base64url string
         type: "public-key",
         transports: auth.transports,
       })),
@@ -49,40 +48,33 @@ router.post("/register-options", async (req, res) => {
     await Challenge.create({ challenge: options.challenge });
     res.json(options);
   } catch (error) {
-    console.error(`Error in /register-options:`, error);
+    console.error("Error in /register-options:", error);
     res.status(500).json({ message: "Server error" });
   }
 });
 
-// [POST] /api/webauthn/verify-registration
+// ------------------- VERIFY REGISTRATION -------------------
 router.post("/verify-registration", async (req, res) => {
   const { userId, cred } = req.body;
 
   try {
-    // Decode clientDataJSON
     const clientDataJSON = Buffer.from(
       cred.response.clientDataJSON,
       "base64"
     ).toString("utf8");
     const challengeFromResponse = JSON.parse(clientDataJSON).challenge;
 
-    // Find user
     const user = await Admin.findById(userId);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-    // Find expected challenge
     const expectedChallenge = await Challenge.findOne({
       challenge: challengeFromResponse,
     });
-    if (!expectedChallenge) {
+    if (!expectedChallenge)
       return res
         .status(400)
         .json({ message: "Challenge not found or expired" });
-    }
 
-    // Verify registration response
     const verification = await verifyRegistrationResponse({
       response: cred,
       expectedChallenge: challengeFromResponse,
@@ -92,31 +84,24 @@ router.post("/verify-registration", async (req, res) => {
     });
 
     if (verification.verified && verification.registrationInfo) {
-      const registrationInfo = verification.registrationInfo;
+      const { registrationInfo } = verification;
+      const { credential } = registrationInfo;
 
-      // ✅ Extract credential from registrationInfo
-      const credential = registrationInfo.credential;
       if (!credential || !credential.id || !credential.publicKey) {
         return res.status(500).json({
           message: "Verification failed due to missing credential data.",
         });
       }
 
-      // Convert to base64url for MongoDB storage
-      const credentialID = Buffer.from(credential.id).toString("base64url");
-      const credentialPublicKey = Buffer.from(credential.publicKey).toString(
-        "base64url"
-      );
-      const counter = credential.counter || 0;
-      const transports = credential.transports || ["internal"];
-
-      // Save authenticator
+      // Save authenticator with base64url strings
       const newAuthenticator = new Authenticator({
-        userId: new mongoose.Types.ObjectId(userId),
-        credentialID,
-        credentialPublicKey,
-        counter,
-        transports,
+        userId: mongoose.Types.ObjectId(userId),
+        credentialID: Buffer.from(credential.id).toString("base64url"),
+        credentialPublicKey: Buffer.from(credential.publicKey).toString(
+          "base64url"
+        ),
+        counter: registrationInfo.counter || 0,
+        transports: credential.transports || ["internal"],
       });
 
       await newAuthenticator.save();
@@ -126,38 +111,50 @@ router.post("/verify-registration", async (req, res) => {
         .json({ message: "Could not verify authenticator." });
     }
 
-    // Delete challenge after verification
     await expectedChallenge.deleteOne();
     res.json({ verified: verification.verified });
   } catch (error) {
     console.error("Error in /verify-registration:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    res.status(500).json({ message: "Server error" });
   }
 });
 
-/**
- * [POST] /api/webauthn/auth-options
- */
+// ------------------- AUTH OPTIONS -------------------
 router.post("/auth-options", async (req, res) => {
+  const { email } = req.body;
+
   try {
-    const options = await generateAuthenticationOptions({
-      rpID,
+    const user = await Admin.findOne({ email: email.toLowerCase() });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const authenticators = await Authenticator.find({ userId: user._id });
+
+    const options = generateAuthenticationOptions({
+      allowCredentials: authenticators.map((auth) => ({
+        id: auth.credentialID,
+        type: "public-key",
+        transports: auth.transports,
+      })),
       userVerification: "preferred",
+      rpID,
     });
 
     await Challenge.create({ challenge: options.challenge });
     res.json(options);
   } catch (error) {
-    console.error(`Error in /auth-options:`, error);
+    console.error("Error in /auth-options:", error);
     res.status(500).json({ message: "Server error" });
   }
 });
 
-// [POST] /api/webauthn/verify-authentication
+// ------------------- VERIFY AUTHENTICATION -------------------
 router.post("/verify-authentication", async (req, res) => {
-  const { cred } = req.body;
+  const { email, cred } = req.body;
 
   try {
+    const user = await Admin.findOne({ email: email.toLowerCase() });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
     const clientDataJSON = Buffer.from(
       cred.response.clientDataJSON,
       "base64"
@@ -167,52 +164,30 @@ router.post("/verify-authentication", async (req, res) => {
     const expectedChallenge = await Challenge.findOne({
       challenge: challengeFromResponse,
     });
-    if (!expectedChallenge) {
+    if (!expectedChallenge)
       return res
         .status(400)
         .json({ message: "Challenge not found or expired" });
-    }
 
-    // ---- Handle cred.id correctly ----
-    let credentialID;
-    if (typeof cred.id === "string") {
-      credentialID = cred.id; // frontend sent string (base64url)
-    } else if (cred.id instanceof ArrayBuffer) {
-      credentialID = Buffer.from(new Uint8Array(cred.id)).toString("base64url"); // convert ArrayBuffer → base64url
-    } else {
-      console.error("Unknown cred.id type:", cred.id);
-      return res.status(400).json({ message: "Invalid credential ID format" });
-    }
-
-    console.log("Incoming credentialID:", credentialID);
-
-    // Find the authenticator in DB
-    const authenticator = await Authenticator.findOne({ credentialID });
+    const authenticator = await Authenticator.findOne({
+      userId: user._id,
+      credentialID: cred.id, // match base64url string
+    });
 
     if (!authenticator) {
-      console.log(
-        "Stored credentialIDs in DB:",
-        await Authenticator.find().select("credentialID")
-      );
       return res.status(404).json({
         message: "Authenticator not found. Please register this device first.",
       });
     }
 
-    console.log("Found authenticator:", authenticator);
-
-    // Verify authentication
     const verification = await verifyAuthenticationResponse({
       response: cred,
       expectedChallenge: challengeFromResponse,
       expectedOrigin: origin,
       expectedRPID: rpID,
       authenticator: {
-        credentialID: Buffer.from(authenticator.credentialID, "base64url"),
-        credentialPublicKey: Buffer.from(
-          authenticator.credentialPublicKey,
-          "base64url"
-        ),
+        credentialID: authenticator.credentialID,
+        credentialPublicKey: authenticator.credentialPublicKey,
         counter: authenticator.counter,
         transports: authenticator.transports,
       },
@@ -228,7 +203,7 @@ router.post("/verify-authentication", async (req, res) => {
     res.json({ verified: verification.verified });
   } catch (error) {
     console.error("Error in /verify-authentication:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    res.status(500).json({ message: "Server error" });
   }
 });
 
