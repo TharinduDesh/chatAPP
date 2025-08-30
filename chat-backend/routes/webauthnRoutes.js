@@ -35,13 +35,14 @@ router.post("/register-options", async (req, res) => {
       userName: user.email,
       attestationType: "none",
       excludeCredentials: userAuthenticators.map((auth) => ({
-        // Pass the raw string from the DB to avoid library validation issues
         id: auth.credentialID,
         type: "public-key",
         transports: auth.transports,
       })),
       authenticatorSelection: {
-        residentKey: "preferred",
+        // --- THE DEFINITIVE FIX ---
+        // This forces the creation of a discoverable passkey that includes the userHandle.
+        residentKey: "required",
         userVerification: "required",
       },
     });
@@ -126,10 +127,6 @@ router.post("/verify-registration", async (req, res) => {
 // [POST] /api/webauthn/auth-options
 router.post("/auth-options", async (req, res) => {
   try {
-    // --- THE DEFINITIVE FIX ---
-    // We will NOT provide an allowCredentials list.
-    // This forces the browser to use "discoverable credentials" (passkeys)
-    // which is the modern, correct flow and avoids all the server-side bugs.
     const options = await generateAuthenticationOptions({
       rpID,
       userVerification: "preferred",
@@ -163,7 +160,6 @@ router.post("/verify-authentication", async (req, res) => {
         .json({ message: "Challenge not found or expired" });
     }
 
-    // Since this is a discoverable credential, the user ID is part of the response
     const userHandle = cred.response.userHandle;
     if (!userHandle) {
       return res
@@ -173,7 +169,7 @@ router.post("/verify-authentication", async (req, res) => {
 
     const authenticator = await Authenticator.findOne({
       credentialID: cred.id,
-      userId: userHandle, // Verify the user ID matches the authenticator
+      userId: userHandle,
     });
 
     if (!authenticator) {
