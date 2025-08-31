@@ -160,7 +160,7 @@ router.post("/auth-options", async (req, res) => {
   }
 });
 
-// ---------------- VERIFY AUTHENTICATION ----------------
+// ---------------- VERIFY AUTHENTICATION (Compatible with v8.x) ----------------
 router.post("/verify-authentication", async (req, res) => {
   const { cred } = req.body;
 
@@ -203,22 +203,19 @@ router.post("/verify-authentication", async (req, res) => {
       hasCredentialPublicKey: !!authenticator.credentialPublicKey,
     });
 
-    // ✅ FIX: For @simplewebauthn/server v13+, use this exact format
+    // ✅ CORRECT FORMAT for @simplewebauthn/server v8.x
     const authenticatorDevice = {
       credentialID: Buffer.from(authenticator.credentialID, "base64url"),
       credentialPublicKey: authenticator.credentialPublicKey,
       counter: authenticator.counter,
-      transports: authenticator.transports || [],
+      transports: authenticator.transports || ["internal"],
     };
 
-    console.log("Authenticator for verification:", {
+    console.log("Authenticator prepared for v8 verification:", {
       credentialIDLength: authenticatorDevice.credentialID.length,
-      credentialPublicKeyLength:
-        authenticatorDevice.credentialPublicKey?.length,
+      credentialPublicKeyLength: authenticatorDevice.credentialPublicKey.length,
       counter: authenticatorDevice.counter,
       transports: authenticatorDevice.transports,
-      credentialIDType: typeof authenticatorDevice.credentialID,
-      credentialPublicKeyType: typeof authenticatorDevice.credentialPublicKey,
     });
 
     // Verify the authentication response
@@ -233,52 +230,44 @@ router.post("/verify-authentication", async (req, res) => {
         requireUserVerification: false,
       });
 
-      console.log("Verification completed successfully:", {
+      console.log("V8 Verification result:", {
         verified: verification.verified,
         authenticationInfo: verification.authenticationInfo
           ? {
               newCounter: verification.authenticationInfo.newCounter,
               userVerified: verification.authenticationInfo.userVerified,
             }
-          : "undefined",
+          : null,
       });
     } catch (verifyError) {
-      console.error("Verification function error:", verifyError);
-
-      // Clean up challenge before returning error
+      console.error("V8 Verification error:", verifyError);
       await expectedChallenge.deleteOne();
 
       return res.status(400).json({
         message: "Authentication verification failed",
         error: verifyError.message,
-        suggestion:
-          "Library version compatibility issue - consider downgrading to v8.x",
       });
     }
 
-    // Handle successful verification
-    if (verification.verified && verification.authenticationInfo) {
-      // Update the counter
-      authenticator.counter = verification.authenticationInfo.newCounter;
-      await authenticator.save();
-
-      console.log(
-        "Authentication successful, counter updated to:",
-        authenticator.counter
-      );
+    // Handle the verification result
+    if (verification.verified) {
+      // Update counter if authenticationInfo is available
+      if (verification.authenticationInfo) {
+        authenticator.counter = verification.authenticationInfo.newCounter;
+        await authenticator.save();
+        console.log("Counter updated to:", authenticator.counter);
+      }
 
       await expectedChallenge.deleteOne();
       res.json({
         verified: true,
         userId: authenticator.userId,
-        newCounter: verification.authenticationInfo.newCounter,
       });
     } else {
-      console.log("Verification failed or no authenticationInfo");
       await expectedChallenge.deleteOne();
       res.json({
         verified: false,
-        message: "Authentication failed - verification returned false",
+        message: "Authentication verification failed",
       });
     }
   } catch (error) {
