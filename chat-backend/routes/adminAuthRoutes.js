@@ -4,6 +4,7 @@ const router = express.Router();
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const Admin = require("../models/Admin"); // Assuming you have an Admin model
+const Authenticator = require("../models/Authenticator"); // ✅ Add this import for biometric login
 const JWT_SECRET = process.env.JWT_SECRET;
 
 /**
@@ -148,6 +149,73 @@ router.post("/login", async (req, res) => {
 });
 
 /**
+ * @route   POST /api/admin/auth/biometric-login
+ * @desc    Create session after successful biometric authentication
+ * @access  Public (but relies on prior WebAuthn verification)
+ */
+router.post("/biometric-login", async (req, res) => {
+  const { email } = req.body;
+
+  try {
+    // Basic validation
+    if (!email) {
+      return res
+        .status(400)
+        .json({ message: "Email is required for biometric login." });
+    }
+
+    // Find the admin by email
+    const admin = await Admin.findOne({ email });
+    if (!admin) {
+      return res.status(404).json({ message: "Admin not found" });
+    }
+
+    // Check if this admin has registered biometric authenticators
+    const hasAuthenticators = await Authenticator.findOne({
+      userId: admin._id,
+    });
+    if (!hasAuthenticators) {
+      return res.status(400).json({
+        message:
+          "No biometric authenticators found for this account. Please register biometrics first.",
+      });
+    }
+
+    // Generate JWT token (same as regular login)
+    const token = jwt.sign(
+      { userId: admin._id, email: admin.email },
+      JWT_SECRET,
+      { expiresIn: "7d" } // Same expiry as regular login
+    );
+
+    // Prepare the admin data for the response (same structure as regular login)
+    const adminResponse = {
+      _id: admin._id,
+      fullName: admin.fullName,
+      email: admin.email,
+      createdAt: admin.createdAt,
+    };
+
+    console.log("Biometric login successful for:", admin.email);
+
+    // Return the same response structure as regular login
+    res.json({
+      message: "Biometric login successful!",
+      token,
+      admin: adminResponse,
+    });
+  } catch (error) {
+    console.error("Error in biometric login:", error);
+    res
+      .status(500)
+      .json({
+        message: "Server error during biometric login.",
+        error: error.message,
+      });
+  }
+});
+
+/**
  * @route   GET /api/admin/auth/me
  * @desc    Get current logged-in admin's profile
  * @access  Private (requires admin token)
@@ -193,8 +261,6 @@ router.put("/me", protectAdmin, async (req, res) => {
     res.status(500).json({ message: "Error updating admin profile" });
   }
 });
-
-// Password Change
 
 /**
  * @route   PUT /api/admin/auth/change-password

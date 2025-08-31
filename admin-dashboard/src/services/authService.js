@@ -19,6 +19,19 @@ export const login = async (email, password) => {
   return response.data;
 };
 
+// ✅ NEW: Function to handle biometric login
+export const biometricLogin = async (email) => {
+  // Since WebAuthn verification happens on the WebAuthn routes,
+  // we just need to create a session after successful biometric verification
+  // You'll need to create this endpoint on your backend
+  const response = await axios.post(API_URL + "biometric-login", { email });
+  if (response.data.token) {
+    // Store user and token in local storage (same as regular login)
+    localStorage.setItem("admin", JSON.stringify(response.data));
+  }
+  return response.data;
+};
+
 // Function to handle admin logout
 export const logout = () => {
   localStorage.removeItem("admin");

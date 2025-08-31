@@ -4,6 +4,7 @@ const routerAuthRoutes = expressAuthRoutes.Router(); // Renamed
 const bcryptAuthRoutes = require("bcryptjs"); // Renamed
 const jwtAuthRoutes = require("jsonwebtoken"); // Renamed
 const UserAuthRoutes = require("../models/User"); // Path to User model
+const Authenticator = require("../models/Authenticator");
 const JWT_SECRET_AUTH_ROUTES = process.env.JWT_SECRET;
 
 // @desc    Register a new user
@@ -99,12 +100,10 @@ routerAuthRoutes.post("/login", async (req, res) => {
 
     // *Check if the account is deactivated **
     if (user.deletedAt) {
-      return res
-        .status(403)
-        .json({
-          message:
-            "This account has been deactivated and is scheduled for deletion.",
-        });
+      return res.status(403).json({
+        message:
+          "This account has been deactivated and is scheduled for deletion.",
+      });
     }
 
     // BAN CHECK LOGIC **

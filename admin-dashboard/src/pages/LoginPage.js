@@ -1,7 +1,7 @@
 // src/pages/LoginPage.js
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { login } from "../services/authService";
+import { login, biometricLogin } from "../services/authService"; // ✅ Import biometricLogin
 import {
   TextField,
   Button,
@@ -52,12 +52,12 @@ const LoginPage = () => {
     }
 
     try {
-      // Call the updated WebAuthn helper
+      // Step 1: Perform WebAuthn verification
       const { verified } = await loginWithBiometrics(email);
 
       if (verified) {
-        // Biometric login successful, call your normal login to set session/token
-        await login(email, null, true); // 'true' indicates biometric login
+        // Step 2: If WebAuthn verification successful, create session
+        await biometricLogin(email); // ✅ Use the new biometricLogin function
 
         setSnackbar({
           open: true,
