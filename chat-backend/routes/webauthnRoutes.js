@@ -287,7 +287,7 @@ router.post("/verify-authentication", async (req, res) => {
 
       await expectedChallenge.deleteOne();
       res.json({
-        verified: true,
+        verified: verification.verified,
         userId: authenticator.userId,
       });
     } else {
