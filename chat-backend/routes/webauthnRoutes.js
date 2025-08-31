@@ -1,6 +1,7 @@
 // chat-backend/routes/webauthnRoutes.js
 const express = require("express");
 const mongoose = require("mongoose");
+const jwt = require("jsonwebtoken"); // <-- ADDED: Import for creating session tokens
 const {
   generateRegistrationOptions,
   verifyRegistrationResponse,
@@ -276,6 +277,9 @@ router.post("/verify-authentication", async (req, res) => {
       });
     }
 
+    // Clean up the challenge now that it has been used
+    await expectedChallenge.deleteOne();
+
     // Handle the verification result
     if (verification.verified) {
       // Update counter if authenticationInfo is available
@@ -285,16 +289,39 @@ router.post("/verify-authentication", async (req, res) => {
         console.log("Counter updated to:", authenticator.counter);
       }
 
-      await expectedChallenge.deleteOne();
-      res.json({
-        verified: true,
-        userId: authenticator.userId,
+      // --- START: MODIFIED LOGIC ---
+      // After successful verification, find the user and create a session token.
+
+      const adminUser = await Admin.findById(authenticator.userId);
+      if (!adminUser) {
+        return res
+          .status(404)
+          .json({ message: "Authenticated admin user not found." });
+      }
+
+      // Generate a JWT for the admin session
+      const token = jwt.sign(
+        { id: adminUser._id, role: "admin" },
+        process.env.JWT_SECRET, // Ensure you have JWT_SECRET in your .env file
+        { expiresIn: "1d" } // Token is valid for 1 day
+      );
+
+      // Send the token and user data back to the frontend
+      res.status(200).json({
+        message: "Biometric login successful!",
+        token,
+        admin: {
+          id: adminUser._id,
+          username: adminUser.username,
+          email: adminUser.email,
+          fullName: adminUser.fullName,
+        },
       });
+      // --- END: MODIFIED LOGIC ---
     } else {
-      await expectedChallenge.deleteOne();
-      res.json({
+      res.status(401).json({
         verified: false,
-        message: "Authentication verification failed",
+        message: "Authentication verification failed.",
       });
     }
   } catch (error) {
