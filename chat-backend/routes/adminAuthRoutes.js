@@ -165,7 +165,6 @@ router.post("/biometric-login", async (req, res) => {
   try {
     console.log("=== BIOMETRIC LOGIN ENDPOINT CALLED ===");
     console.log("Request body:", req.body);
-    console.log("Request headers:", req.headers);
 
     const { userId } = req.body;
 

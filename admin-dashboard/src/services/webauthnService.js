@@ -51,24 +51,27 @@ export const registerBiometrics = async (email, userId) => {
 // ---------------------
 // Login with Biometrics
 // ---------------------
-// Update your loginWithBiometrics function
+// Update the loginWithBiometrics function
 export const loginWithBiometrics = async (email) => {
   try {
     console.log("Starting biometric login for:", email);
 
+    // Step 1: Get authentication options
     const optionsResponse = await webauthnApi.post("/auth-options", { email });
     console.log("Auth options received");
 
+    // Step 2: Start browser authentication
     const cred = await startAuthentication(optionsResponse.data);
     console.log("Authentication started");
 
+    // Step 3: Verify the authentication response
     const verificationResponse = await webauthnApi.post(
       "/verify-authentication",
       { cred, email }
     );
     console.log("Verification response:", verificationResponse.data);
 
-    // If verification is successful, call the BIOMETRIC login endpoint
+    // Step 4: If verification is successful, call the BIOMETRIC login endpoint
     if (
       verificationResponse.data.verified &&
       verificationResponse.data.userId
@@ -78,12 +81,10 @@ export const loginWithBiometrics = async (email) => {
         verificationResponse.data.userId
       );
 
-      // Use axios directly, not webauthnApi
+      // IMPORTANT: Call the correct endpoint - /admin/auth/biometric-login
       const loginResponse = await axios.post(
         `${API_BASE_URL}/admin/auth/biometric-login`,
-        {
-          userId: verificationResponse.data.userId,
-        }
+        { userId: verificationResponse.data.userId }
       );
 
       console.log("Biometric login response:", loginResponse.data);
