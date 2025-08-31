@@ -160,27 +160,29 @@ router.post("/login", async (req, res) => {
  * @access  Public (but relies on prior WebAuthn verification)
  */
 // Add this to your adminAuthRoutes.js file
-
 router.post("/biometric-login", async (req, res) => {
   try {
     console.log("=== BIOMETRIC LOGIN ENDPOINT CALLED ===");
-    console.log("Request body:", req.body);
+    console.log("Request body:", JSON.stringify(req.body, null, 2));
+    console.log("Request headers:", JSON.stringify(req.headers, null, 2));
 
     const { userId } = req.body;
 
     if (!userId) {
-      console.log("ERROR: No userId provided");
+      console.log("❌ ERROR: No userId provided to biometric login");
       return res.status(400).json({ message: "User ID is required" });
     }
+
+    console.log("🔍 Looking for admin with userId:", userId);
 
     // Find admin by ID
     const admin = await Admin.findById(userId);
     if (!admin) {
-      console.log("ERROR: Admin not found for userId:", userId);
+      console.log("❌ ERROR: Admin not found for userId:", userId);
       return res.status(401).json({ message: "Admin not found." });
     }
 
-    console.log("SUCCESS: Admin found:", admin.email);
+    console.log("✅ SUCCESS: Admin found:", admin.email);
 
     // Generate JWT token
     const token = jwt.sign(
@@ -197,7 +199,7 @@ router.post("/biometric-login", async (req, res) => {
       createdAt: admin.createdAt,
     };
 
-    console.log("Biometric login successful for:", admin.email);
+    console.log("🎉 Biometric login successful for:", admin.email);
 
     res.status(200).json({
       message: "Biometric login successful!",
@@ -205,7 +207,8 @@ router.post("/biometric-login", async (req, res) => {
       admin: adminResponse,
     });
   } catch (error) {
-    console.error("Biometric Login Error:", error.message);
+    console.error("❌ Biometric Login Error:", error.message);
+    console.error("Error stack:", error.stack);
     res.status(500).json({
       message: "Server error during biometric login.",
       error: error.message,

@@ -56,49 +56,79 @@ export const registerBiometrics = async (email, userId) => {
 // ---------------------
 // Login with Biometrics
 // ---------------------
-// Update the loginWithBiometrics function
 export const loginWithBiometrics = async (email) => {
   try {
-    console.log("Starting biometric login for:", email);
+    console.log("🔍 WEBAUTHN DEBUG: Starting biometric login for:", email);
 
+    // 1. Get authentication options
     const optionsResponse = await webauthnApi.post("/auth-options", { email });
-    console.log("Auth options received");
+    console.log(
+      "🔍 WEBAUTHN DEBUG: Auth options received:",
+      optionsResponse.data
+    );
 
+    // 2. Start browser authentication
     const cred = await startAuthentication(optionsResponse.data);
-    console.log("Authentication started");
+    console.log("🔍 WEBAUTHN DEBUG: Browser authentication completed");
 
+    // 3. Verify authentication with server
     const verificationResponse = await webauthnApi.post(
       "/verify-authentication",
       { cred, email }
     );
-    console.log("Verification response:", verificationResponse.data);
+    console.log(
+      "🔍 WEBAUTHN DEBUG: Verification response:",
+      verificationResponse.data
+    );
 
-    // If verification is successful, call the BIOMETRIC login endpoint
+    // 4. If verification is successful, call the biometric login endpoint
     if (
       verificationResponse.data.verified &&
       verificationResponse.data.userId
     ) {
       console.log(
-        "Calling biometric login endpoint with userId:",
+        "🔍 WEBAUTHN DEBUG: Calling biometric login endpoint with userId:",
         verificationResponse.data.userId
       );
 
-      // Use the authApi instance, not webauthnApi
+      // Use the authApi instance for the biometric login endpoint
       const loginResponse = await authApi.post("/admin/auth/biometric-login", {
         userId: verificationResponse.data.userId,
       });
 
-      console.log("Biometric login response:", loginResponse.data);
+      console.log(
+        "🔍 WEBAUTHN DEBUG: Biometric login response:",
+        loginResponse.data
+      );
       return loginResponse.data;
     }
 
-    console.log("Verification failed");
+    console.log("🔍 WEBAUTHN DEBUG: Verification failed");
     return verificationResponse.data;
   } catch (error) {
-    console.error(
-      "Authentication failed:",
-      error.response?.data || error.message
-    );
+    console.error("🔍 WEBAUTHN DEBUG: Authentication failed:", {
+      message: error.message,
+      response: error.response?.data,
+      status: error.response?.status,
+      url: error.config?.url,
+    });
+
+    // Check if it's a network error or specific API error
+    if (error.response) {
+      // The request was made and the server responded with a status code
+      console.error(
+        "🔍 WEBAUTHN DEBUG: Server responded with error:",
+        error.response.status
+      );
+      console.error("🔍 WEBAUTHN DEBUG: Error data:", error.response.data);
+    } else if (error.request) {
+      // The request was made but no response was received
+      console.error("🔍 WEBAUTHN DEBUG: No response received:", error.request);
+    } else {
+      // Something happened in setting up the request
+      console.error("🔍 WEBAUTHN DEBUG: Request setup error:", error.message);
+    }
+
     throw error;
   }
 };
