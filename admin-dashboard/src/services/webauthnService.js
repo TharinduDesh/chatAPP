@@ -10,6 +10,41 @@ const webauthnApi = axios.create({
   baseURL: `${API_BASE_URL}/api/webauthn`,
 });
 
+// ---------------------------------
+// GET AUTHENTICATION OPTIONS
+// ---------------------------------
+export const getAuthenticationOptions = async () => {
+  try {
+    // We don't need email for this part of the flow as per backend logic
+    const optionsResponse = await webauthnApi.post("/auth-options");
+    console.log("🔍 WEBAUTHN DEBUG: Got authentication options");
+    return optionsResponse.data;
+  } catch (error) {
+    console.error("🔍 WEBAUTHN DEBUG: Failed to get auth options:", error);
+    throw error;
+  }
+};
+
+// ---------------------------------
+// VERIFY AUTHENTICATION
+// ---------------------------------
+export const verifyAuthentication = async (cred) => {
+  try {
+    const verificationResponse = await webauthnApi.post(
+      "/verify-authentication",
+      { cred }
+    );
+    console.log(
+      "🔍 WEBAUTHN DEBUG: Authentication verification response:",
+      verificationResponse.data
+    );
+    return verificationResponse.data;
+  } catch (error) {
+    console.error("🔍 WEBAUTHN DEBUG: Failed to verify authentication:", error);
+    throw error;
+  }
+};
+
 // ---------------------
 // Register Biometrics
 // ---------------------
