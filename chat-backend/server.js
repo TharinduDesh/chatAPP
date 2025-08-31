@@ -20,7 +20,10 @@ const io = new Server(httpServer, { cors: { origin: "*" } });
 // --- Global Middleware ---
 // This section is now corrected and simplified.
 const corsOptions = {
-  origin: "https://sltchatapp1.netlify.app", // Your Netlify frontend URL
+  origin: [
+    "https://sltchatapp1.netlify.app", // Production
+    "http://localhost:3000", // Local development
+  ], // Your Netlify frontend URL
   methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
   credentials: true,
   optionsSuccessStatus: 204,
