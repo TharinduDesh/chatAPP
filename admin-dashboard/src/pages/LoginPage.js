@@ -55,7 +55,10 @@ const LoginPage = () => {
       return;
     }
     try {
+      console.log("Starting biometric login process...");
       const result = await loginWithBiometrics(email);
+      console.log("Biometric login result:", result);
+
       if (result.token) {
         // Store the token and user data
         localStorage.setItem("token", result.token);
@@ -72,6 +75,7 @@ const LoginPage = () => {
         alert("Biometric login failed. Please try again.");
       }
     } catch (error) {
+      console.error("Biometric login error:", error);
       alert(
         error.response?.data?.message ||
           "An error occurred during biometric login."

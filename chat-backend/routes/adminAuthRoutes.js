@@ -94,10 +94,14 @@ router.post("/signup", async (req, res) => {
  */
 router.post("/login", async (req, res) => {
   try {
+    console.log("=== REGULAR LOGIN ENDPOINT CALLED ===");
+    console.log("Login request body:", req.body);
+
     const { email, password } = req.body;
 
     // Basic validation
     if (!email || !password) {
+      console.log("ERROR: Missing email or password in regular login");
       return res
         .status(400)
         .json({ message: "Please provide email and password." });
@@ -118,6 +122,8 @@ router.post("/login", async (req, res) => {
         .status(401)
         .json({ message: "Invalid credentials. Password incorrect." });
     }
+
+    console.log("Processing regular login for:", email);
 
     // If credentials are correct, generate a new JWT
     const token = jwt.sign(
@@ -155,24 +161,27 @@ router.post("/login", async (req, res) => {
  */
 // Add this to your adminAuthRoutes.js file
 
-/**
- * @route   POST /api/admin/auth/biometric-login
- * @desc    Login admin using biometric verification
- * @access  Public
- */
 router.post("/biometric-login", async (req, res) => {
   try {
+    console.log("=== BIOMETRIC LOGIN ENDPOINT CALLED ===");
+    console.log("Request body:", req.body);
+    console.log("Request headers:", req.headers);
+
     const { userId } = req.body;
 
     if (!userId) {
+      console.log("ERROR: No userId provided");
       return res.status(400).json({ message: "User ID is required" });
     }
 
     // Find admin by ID
     const admin = await Admin.findById(userId);
     if (!admin) {
+      console.log("ERROR: Admin not found for userId:", userId);
       return res.status(401).json({ message: "Admin not found." });
     }
+
+    console.log("SUCCESS: Admin found:", admin.email);
 
     // Generate JWT token
     const token = jwt.sign(
@@ -188,6 +197,8 @@ router.post("/biometric-login", async (req, res) => {
       email: admin.email,
       createdAt: admin.createdAt,
     };
+
+    console.log("Biometric login successful for:", admin.email);
 
     res.status(200).json({
       message: "Biometric login successful!",
