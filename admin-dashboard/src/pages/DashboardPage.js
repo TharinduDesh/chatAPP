@@ -87,10 +87,13 @@ const DashboardPage = () => {
     const admin = getCurrentAdmin();
     if (!admin) return;
 
-    // Use the API_URL from your config for the socket connection
+    // --- START: FIX ---
+    // The query now correctly sends the admin's raw ID without any prefix.
+    // The backend will add the 'admin_' prefix itself for socket room management.
     const socket = io(API_BASE_URL, {
-      query: { userId: `admin_${admin.id}` }, // Safely access admin ID
+      query: { userId: admin.id, isAdmin: true }, // Send the raw ID and a flag
     });
+    // --- END: FIX ---
 
     socket.on("activeUsers", (activeUserIds) => {
       const chatUsersOnline = activeUserIds.filter(
