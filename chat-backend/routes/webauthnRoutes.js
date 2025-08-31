@@ -230,7 +230,7 @@ router.post("/verify-authentication", async (req, res) => {
         requireUserVerification: false,
       });
 
-      console.log("V8 Verification result:", {
+      console.log("V10 Verification result:", {
         verified: verification.verified,
         authenticationInfo: verification.authenticationInfo
           ? {
@@ -240,7 +240,7 @@ router.post("/verify-authentication", async (req, res) => {
           : null,
       });
     } catch (verifyError) {
-      console.error("V8 Verification error:", verifyError);
+      console.error("V10 Verification error:", verifyError);
       await expectedChallenge.deleteOne();
 
       return res.status(400).json({
