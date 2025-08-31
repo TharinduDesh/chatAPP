@@ -94,15 +94,14 @@ export const changeAdminPassword = async (passwordData) => {
   return response.data;
 };
 
-// Temporary test function
 export const testBiometricEndpoint = async (email) => {
-  console.log("🔍 FRONTEND TEST: Testing biometric endpoint");
+  console.log("FRONTEND TEST: Testing biometric endpoint");
   try {
     const response = await axios.post(API_URL + "test-biometric", { email });
-    console.log("🔍 FRONTEND TEST: Response:", response.data);
+    console.log("FRONTEND TEST: Response:", response.data);
     return response.data;
   } catch (error) {
-    console.error("🔍 FRONTEND TEST: Error:", error);
+    console.error("FRONTEND TEST: Error:", error);
     throw error;
   }
 };

@@ -56,36 +56,20 @@ const LoginPage = () => {
     }
 
     try {
-      // Step 1: Perform WebAuthn verification
-      const { verified } = await loginWithBiometrics(email);
+      // Skip WebAuthn for now, just test the API call
+      console.log("Testing direct API call...");
+      await testBiometricEndpoint(email);
 
-      if (verified) {
-        // Step 2: If WebAuthn verification successful, create session
-        // await biometricLogin(email); // ✅ Use the new biometricLogin function
-
-        await testBiometricEndpoint(email);
-
-        setSnackbar({
-          open: true,
-          message: "Biometric login successful!",
-          severity: "success",
-        });
-
-        navigate("/dashboard");
-      } else {
-        setSnackbar({
-          open: true,
-          message: "Biometric login failed. Please try again.",
-          severity: "warning",
-        });
-      }
-    } catch (error) {
-      console.error("Biometric login error:", error);
       setSnackbar({
         open: true,
-        message:
-          error.response?.data?.message ||
-          "An error occurred during biometric login.",
+        message: "Test successful!",
+        severity: "success",
+      });
+    } catch (error) {
+      console.error("Test error:", error);
+      setSnackbar({
+        open: true,
+        message: error.response?.data?.message || "Test failed",
         severity: "error",
       });
     }
