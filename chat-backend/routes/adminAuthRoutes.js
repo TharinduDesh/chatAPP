@@ -94,14 +94,10 @@ router.post("/signup", async (req, res) => {
  */
 router.post("/login", async (req, res) => {
   try {
-    console.log("=== REGULAR LOGIN ENDPOINT CALLED ===");
-    console.log("Login request body:", req.body);
-
     const { email, password } = req.body;
 
     // Basic validation
     if (!email || !password) {
-      console.log("ERROR: Missing email or password in regular login");
       return res
         .status(400)
         .json({ message: "Please provide email and password." });
@@ -122,8 +118,6 @@ router.post("/login", async (req, res) => {
         .status(401)
         .json({ message: "Invalid credentials. Password incorrect." });
     }
-
-    console.log("Processing regular login for:", email);
 
     // If credentials are correct, generate a new JWT
     const token = jwt.sign(
@@ -159,39 +153,63 @@ router.post("/login", async (req, res) => {
  * @desc    Create session after successful biometric authentication
  * @access  Public (but relies on prior WebAuthn verification)
  */
-// Add this to your adminAuthRoutes.js file
 router.post("/biometric-login", async (req, res) => {
+  console.log("🔍 BACKEND DEBUG: Biometric login endpoint called");
+  console.log("🔍 BACKEND DEBUG: Request body:", req.body);
+  console.log("🔍 BACKEND DEBUG: Request headers:", req.headers);
+
+  const { email } = req.body;
+
   try {
-    console.log("=== BIOMETRIC LOGIN ENDPOINT CALLED ===");
-    console.log("Request body:", JSON.stringify(req.body, null, 2));
-    console.log("Request headers:", JSON.stringify(req.headers, null, 2));
-
-    const { userId } = req.body;
-
-    if (!userId) {
-      console.log("❌ ERROR: No userId provided to biometric login");
-      return res.status(400).json({ message: "User ID is required" });
+    // Basic validation
+    if (!email) {
+      console.log("🔍 BACKEND DEBUG: No email provided");
+      return res
+        .status(400)
+        .json({ message: "Email is required for biometric login." });
     }
 
-    console.log("🔍 Looking for admin with userId:", userId);
+    console.log("🔍 BACKEND DEBUG: Looking for admin with email:", email);
 
-    // Find admin by ID
-    const admin = await Admin.findById(userId);
+    // Find the admin by email
+    const admin = await Admin.findOne({ email });
     if (!admin) {
-      console.log("❌ ERROR: Admin not found for userId:", userId);
-      return res.status(401).json({ message: "Admin not found." });
+      console.log("🔍 BACKEND DEBUG: Admin not found for email:", email);
+      return res.status(404).json({ message: "Admin not found" });
     }
 
-    console.log("✅ SUCCESS: Admin found:", admin.email);
+    console.log("🔍 BACKEND DEBUG: Admin found:", {
+      id: admin._id,
+      email: admin.email,
+    });
 
-    // Generate JWT token
+    // Check if this admin has registered biometric authenticators
+    const hasAuthenticators = await Authenticator.findOne({
+      userId: admin._id,
+    });
+    if (!hasAuthenticators) {
+      console.log(
+        "🔍 BACKEND DEBUG: No authenticators found for admin:",
+        admin._id
+      );
+      return res.status(400).json({
+        message:
+          "No biometric authenticators found for this account. Please register biometrics first.",
+      });
+    }
+
+    console.log("🔍 BACKEND DEBUG: Authenticators found for admin");
+
+    // Generate JWT token (same as regular login)
     const token = jwt.sign(
       { userId: admin._id, email: admin.email },
       JWT_SECRET,
-      { expiresIn: "7d" }
+      { expiresIn: "7d" } // Same expiry as regular login
     );
 
-    // Prepare the admin data for the response
+    console.log("🔍 BACKEND DEBUG: JWT token generated successfully");
+
+    // Prepare the admin data for the response (same structure as regular login)
     const adminResponse = {
       _id: admin._id,
       fullName: admin.fullName,
@@ -199,16 +217,16 @@ router.post("/biometric-login", async (req, res) => {
       createdAt: admin.createdAt,
     };
 
-    console.log("🎉 Biometric login successful for:", admin.email);
+    console.log("🔍 BACKEND DEBUG: Sending successful response");
 
-    res.status(200).json({
+    // Return the same response structure as regular login
+    res.json({
       message: "Biometric login successful!",
       token,
       admin: adminResponse,
     });
   } catch (error) {
-    console.error("❌ Biometric Login Error:", error.message);
-    console.error("Error stack:", error.stack);
+    console.error("🔍 BACKEND DEBUG: Error in biometric login:", error);
     res.status(500).json({
       message: "Server error during biometric login.",
       error: error.message,
