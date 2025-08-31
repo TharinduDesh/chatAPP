@@ -212,9 +212,12 @@ router.post("/verify-authentication", async (req, res) => {
     const incomingCredentialID = cred.id;
     console.log("Incoming credentialID:", incomingCredentialID);
 
+    // --- START: MODIFICATION ---
+    // Use .populate('userId') to fetch the admin data along with the authenticator
     const authenticator = await Authenticator.findOne({
       credentialID: incomingCredentialID,
-    });
+    }).populate("userId");
+    // --- END: MODIFICATION ---
 
     if (!authenticator) {
       await expectedChallenge.deleteOne();
@@ -290,9 +293,9 @@ router.post("/verify-authentication", async (req, res) => {
       }
 
       // --- START: MODIFIED LOGIC ---
-      // After successful verification, find the user and create a session token.
+      // The admin user is now attached to authenticator.userId because we used .populate()
+      const adminUser = authenticator.userId;
 
-      const adminUser = await Admin.findById(authenticator.userId);
       if (!adminUser) {
         return res
           .status(404)
