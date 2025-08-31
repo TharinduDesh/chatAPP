@@ -21,15 +21,26 @@ export const login = async (email, password) => {
 
 // ✅ NEW: Function to handle biometric login
 export const biometricLogin = async (email) => {
-  // Since WebAuthn verification happens on the WebAuthn routes,
-  // we just need to create a session after successful biometric verification
-  // You'll need to create this endpoint on your backend
-  const response = await axios.post(API_URL + "biometric-login", { email });
-  if (response.data.token) {
-    // Store user and token in local storage (same as regular login)
-    localStorage.setItem("admin", JSON.stringify(response.data));
+  console.log("🔍 FRONTEND DEBUG: biometricLogin called with email:", email);
+  console.log("🔍 FRONTEND DEBUG: API_URL:", API_URL);
+
+  try {
+    // Since WebAuthn verification happens on the WebAuthn routes,
+    // we just need to create a session after successful biometric verification
+    const response = await axios.post(API_URL + "biometric-login", { email });
+    console.log("🔍 FRONTEND DEBUG: Biometric login response:", response.data);
+
+    if (response.data.token) {
+      // Store user and token in local storage (same as regular login)
+      localStorage.setItem("admin", JSON.stringify(response.data));
+      console.log("🔍 FRONTEND DEBUG: Token stored in localStorage");
+    }
+    return response.data;
+  } catch (error) {
+    console.error("🔍 FRONTEND DEBUG: Biometric login error:", error);
+    console.error("🔍 FRONTEND DEBUG: Error response:", error.response?.data);
+    throw error;
   }
-  return response.data;
 };
 
 // Function to handle admin logout
