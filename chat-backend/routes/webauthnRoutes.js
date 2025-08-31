@@ -30,17 +30,17 @@ router.post("/register-options", async (req, res) => {
     const options = await generateRegistrationOptions({
       rpName: "ChatApp Admin",
       rpID,
-      userID: Buffer.from(user._id.toString()),
+      userID: user._id.toString(), // Keep as string for v10
       userName: user.email,
       attestationType: "none",
       excludeCredentials: userAuthenticators.map((auth) => ({
-        id: Buffer.from(auth.credentialID, "base64url"), // Convert back to Buffer for exclusion
+        id: auth.credentialID, // Keep as string for v10
         type: "public-key",
         transports: auth.transports,
       })),
       authenticatorSelection: {
-        residentKey: "required",
-        userVerification: "required",
+        residentKey: "preferred", // Changed from "required" for better compatibility
+        userVerification: "preferred", // Changed from "required"
       },
     });
 
@@ -74,6 +74,14 @@ router.post("/verify-registration", async (req, res) => {
         .status(400)
         .json({ message: "Challenge not found or expired" });
 
+    console.log("Registration verification input:", {
+      hasCredential: !!cred,
+      hasResponse: !!cred.response,
+      hasAttestationObject: !!cred.response?.attestationObject,
+      hasClientDataJSON: !!cred.response?.clientDataJSON,
+      credentialId: cred.id,
+    });
+
     const verification = await verifyRegistrationResponse({
       response: cred,
       expectedChallenge: challengeFromResponse,
@@ -82,54 +90,70 @@ router.post("/verify-registration", async (req, res) => {
       requireUserVerification: false,
     });
 
-    if (verification.verified && verification.registrationInfo) {
-      const registrationInfo = verification.registrationInfo;
-      const credential = registrationInfo.credential;
+    console.log("Registration verification result:", {
+      verified: verification.verified,
+      hasRegistrationInfo: !!verification.registrationInfo,
+    });
 
-      if (!credential || !credential.id || !credential.publicKey) {
+    if (verification.verified && verification.registrationInfo) {
+      const { credentialID, credentialPublicKey, counter } =
+        verification.registrationInfo;
+
+      console.log("Registration info received:", {
+        hasCredentialID: !!credentialID,
+        hasCredentialPublicKey: !!credentialPublicKey,
+        counter: counter,
+        credentialIDType: typeof credentialID,
+        credentialPublicKeyType: typeof credentialPublicKey,
+      });
+
+      // For v10, handle the credential data properly
+      let finalCredentialID;
+      if (typeof credentialID === "string") {
+        finalCredentialID = credentialID;
+      } else if (credentialID instanceof Buffer) {
+        finalCredentialID = credentialID.toString("base64url");
+      } else if (credentialID instanceof Uint8Array) {
+        finalCredentialID = Buffer.from(credentialID).toString("base64url");
+      } else {
+        console.error("Unexpected credentialID type:", typeof credentialID);
         return res.status(500).json({
-          message: "Verification failed due to missing credential data.",
+          message: "Verification failed due to unexpected credential format.",
         });
       }
 
-      // Store the credential ID as a base64url string
-      let credentialID;
-      if (credential.id instanceof Uint8Array) {
-        credentialID = Buffer.from(credential.id).toString("base64url");
-      } else if (credential.id instanceof ArrayBuffer) {
-        credentialID = Buffer.from(credential.id).toString("base64url");
+      // Handle credentialPublicKey
+      let finalCredentialPublicKey;
+      if (credentialPublicKey instanceof Buffer) {
+        finalCredentialPublicKey = credentialPublicKey;
+      } else if (credentialPublicKey instanceof Uint8Array) {
+        finalCredentialPublicKey = Buffer.from(credentialPublicKey);
       } else {
-        credentialID = credential.id; // Assume it's already a string
+        console.error(
+          "Unexpected credentialPublicKey type:",
+          typeof credentialPublicKey
+        );
+        return res.status(500).json({
+          message: "Verification failed due to unexpected public key format.",
+        });
       }
 
-      // Store the public key as Buffer
-      let credentialPublicKey;
-      if (credential.publicKey instanceof Uint8Array) {
-        credentialPublicKey = Buffer.from(credential.publicKey);
-      } else if (credential.publicKey instanceof ArrayBuffer) {
-        credentialPublicKey = Buffer.from(credential.publicKey);
-      } else {
-        credentialPublicKey = Buffer.from(credential.publicKey);
-      }
-
-      const counter = registrationInfo.counter || 0;
-
-      console.log("Registration completed:", {
-        credentialID,
-        credentialPublicKeyLength: credentialPublicKey.length,
-        counter,
+      console.log("Final credential data:", {
+        credentialID: finalCredentialID,
+        credentialPublicKeyLength: finalCredentialPublicKey.length,
+        counter: counter || 0,
       });
 
       const newAuthenticator = new Authenticator({
         userId: new mongoose.Types.ObjectId(userId),
-        credentialID,
-        credentialPublicKey,
-        counter,
-        transports: ["internal"],
+        credentialID: finalCredentialID,
+        credentialPublicKey: finalCredentialPublicKey,
+        counter: counter || 0,
+        transports: ["internal"], // Default transport for v10
       });
 
       await newAuthenticator.save();
-      console.log("Authenticator saved successfully");
+      console.log("Authenticator saved successfully for v10");
     } else {
       return res
         .status(400)
@@ -160,7 +184,7 @@ router.post("/auth-options", async (req, res) => {
   }
 });
 
-// ---------------- VERIFY AUTHENTICATION (Compatible with v8.x) ----------------
+// ---------------- VERIFY AUTHENTICATION (Compatible with v10.x) ----------------
 router.post("/verify-authentication", async (req, res) => {
   const { cred } = req.body;
 
@@ -203,17 +227,19 @@ router.post("/verify-authentication", async (req, res) => {
       hasCredentialPublicKey: !!authenticator.credentialPublicKey,
     });
 
-    // ✅ CORRECT FORMAT for @simplewebauthn/server v8.x
+    // ✅ CORRECT FORMAT for @simplewebauthn/server v10.x
     const authenticatorDevice = {
-      credentialID: Buffer.from(authenticator.credentialID, "base64url"),
-      credentialPublicKey: authenticator.credentialPublicKey,
+      credentialID: authenticator.credentialID, // Keep as base64url string for v10
+      credentialPublicKey: authenticator.credentialPublicKey, // Keep as Buffer
       counter: authenticator.counter,
       transports: authenticator.transports || ["internal"],
     };
 
-    console.log("Authenticator prepared for v8 verification:", {
-      credentialIDLength: authenticatorDevice.credentialID.length,
+    console.log("Authenticator prepared for v10 verification:", {
+      credentialID: authenticatorDevice.credentialID,
+      credentialIDType: typeof authenticatorDevice.credentialID,
       credentialPublicKeyLength: authenticatorDevice.credentialPublicKey.length,
+      credentialPublicKeyType: typeof authenticatorDevice.credentialPublicKey,
       counter: authenticatorDevice.counter,
       transports: authenticatorDevice.transports,
     });
