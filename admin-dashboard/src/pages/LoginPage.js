@@ -1,7 +1,7 @@
-// src/pages/LoginPage.js - DEBUG VERSION
+// src/pages/LoginPage.js
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { login, biometricLogin } from "../services/authService"; // ✅ Make sure both are imported
+import { login, biometricLogin } from "../services/authService";
 import {
   TextField,
   Button,
@@ -41,69 +41,47 @@ const LoginPage = () => {
     }
   };
 
-  const handleBiometricLogin = async () => {
-    console.log("🔍 DEBUG: Starting biometric login process");
-    console.log("🔍 DEBUG: Email:", email);
-    console.log(
-      "🔍 DEBUG: biometricLogin function exists:",
-      typeof biometricLogin
-    );
+  const handleCloseSnackbar = (event, reason) => {
+    if (reason === "clickaway") {
+      return;
+    }
+    setSnackbar({ ...snackbar, open: false });
+  };
 
+  const handleBiometricLogin = async () => {
     if (!email) {
       setSnackbar({
         open: true,
-        message: "Please enter your Email Address to log in with biometrics.",
+        message: "Please enter your email address to use biometrics.",
         severity: "warning",
       });
       return;
     }
 
     try {
-      console.log("🔍 DEBUG: Step 1 - Starting WebAuthn verification");
+      // Step 1: Perform the biometric verification
+      const verification = await loginWithBiometrics(email);
 
-      // Step 1: Perform WebAuthn verification
-      const webauthnResult = await loginWithBiometrics(email);
-      console.log("🔍 DEBUG: WebAuthn result:", webauthnResult);
+      // --- ✅ THE DEFINITIVE FIX: Check the response and proceed ---
+      if (verification && verification.verified) {
+        // Step 2: If biometrics are verified, create the login session
+        await biometricLogin(email);
 
-      if (webauthnResult.verified) {
-        console.log(
-          "🔍 DEBUG: Step 2 - WebAuthn successful, calling biometricLogin"
-        );
-
-        // Step 2: If WebAuthn verification successful, create session
-        const loginResult = await biometricLogin(email);
-        console.log("🔍 DEBUG: Biometric login result:", loginResult);
-
-        setSnackbar({
-          open: true,
-          message: "Biometric login successful!",
-          severity: "success",
-        });
-
+        // Step 3: Navigate to the dashboard
         navigate("/dashboard");
       } else {
-        console.log("🔍 DEBUG: WebAuthn verification failed");
-        setSnackbar({
-          open: true,
-          message: "Biometric login failed. Please try again.",
-          severity: "warning",
-        });
+        throw new Error("Biometric verification failed.");
       }
     } catch (error) {
-      console.error("🔍 DEBUG: Biometric login error:", error);
-      console.error("🔍 DEBUG: Error response:", error.response?.data);
+      console.error("Biometric login process failed", error);
       setSnackbar({
         open: true,
         message:
           error.response?.data?.message ||
-          "An error occurred during biometric login.",
+          "Biometric login failed. Please try again.",
         severity: "error",
       });
     }
-  };
-
-  const handleCloseSnackbar = () => {
-    setSnackbar({ ...snackbar, open: false });
   };
 
   return (
