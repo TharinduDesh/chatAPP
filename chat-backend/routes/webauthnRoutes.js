@@ -256,6 +256,16 @@ router.post("/verify-authentication", async (req, res) => {
     // Verify authentication
     let verification;
     try {
+      // Log the raw credential response for debugging
+      console.log("Raw credential response:", {
+        id: cred.id,
+        rawId: cred.rawId,
+        hasResponse: !!cred.response,
+        hasAuthenticatorData: !!cred.response?.authenticatorData,
+        hasSignature: !!cred.response?.signature,
+        hasClientDataJSON: !!cred.response?.clientDataJSON,
+      });
+
       verification = await verifyAuthenticationResponse({
         response: cred,
         expectedChallenge: challengeFromResponse,
@@ -263,24 +273,40 @@ router.post("/verify-authentication", async (req, res) => {
         expectedRPID: rpID,
         authenticator: authenticatorForVerification,
         requireUserVerification: false,
-        // Add this for better debugging
-        advancedFIDOConfig: {
-          userVerification: "preferred",
-        },
       });
 
       console.log("Verification result:", {
         verified: verification.verified,
         hasAuthInfo: !!verification.authenticationInfo,
+        verificationKeys: Object.keys(verification || {}),
       });
     } catch (verifyError) {
       console.error("Verification function error:", verifyError);
       console.error("Error details:", {
         name: verifyError.name,
         message: verifyError.message,
-        stack: verifyError.stack?.split("\n")[0], // Just first line of stack
+        stack: verifyError.stack?.split("\n").slice(0, 3), // First 3 lines of stack
       });
-      // Provide more detailed error info
+
+      // Check if it's a specific WebAuthn error
+      if (
+        verifyError.message.includes("counter") ||
+        verifyError.message.includes("undefined")
+      ) {
+        console.error(
+          "This appears to be a counter-related error in the library"
+        );
+        console.error("Current authenticator counter:", authenticator.counter);
+
+        // Try a workaround: manually handle the verification result
+        return res.status(400).json({
+          message:
+            "Authentication verification failed due to internal library error",
+          error: verifyError.message,
+          suggestion: "This may be a library version compatibility issue",
+        });
+      }
+
       return res.status(400).json({
         message: "Authentication verification failed",
         error: verifyError.message,
