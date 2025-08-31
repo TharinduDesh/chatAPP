@@ -149,6 +149,17 @@ router.post("/login", async (req, res) => {
 });
 
 /**
+ * @route   POST /api/admin/auth/test-biometric
+ * @desc    Test endpoint to verify routing is working
+ * @access  Public (temporary for debugging)
+ */
+router.post("/test-biometric", async (req, res) => {
+  console.log("🔍 TEST: Biometric test endpoint called!");
+  console.log("🔍 TEST: Request body:", req.body);
+  res.json({ message: "Test endpoint working!", data: req.body });
+});
+
+/**
  * @route   POST /api/admin/auth/biometric-login
  * @desc    Create session after successful biometric authentication
  * @access  Public (but relies on prior WebAuthn verification)
@@ -227,12 +238,10 @@ router.post("/biometric-login", async (req, res) => {
     });
   } catch (error) {
     console.error("🔍 BACKEND DEBUG: Error in biometric login:", error);
-    res
-      .status(500)
-      .json({
-        message: "Server error during biometric login.",
-        error: error.message,
-      });
+    res.status(500).json({
+      message: "Server error during biometric login.",
+      error: error.message,
+    });
   }
 });
 
