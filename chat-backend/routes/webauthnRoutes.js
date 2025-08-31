@@ -165,12 +165,14 @@ router.post("/verify-authentication", async (req, res) => {
   const { cred } = req.body;
 
   try {
+    // Extract challenge from the client data
     const clientDataJSON = Buffer.from(
       cred.response.clientDataJSON,
       "base64"
     ).toString("utf8");
     const challengeFromResponse = JSON.parse(clientDataJSON).challenge;
 
+    // Find and validate the challenge
     const expectedChallenge = await Challenge.findOne({
       challenge: challengeFromResponse,
     });
@@ -180,34 +182,17 @@ router.post("/verify-authentication", async (req, res) => {
         .json({ message: "Challenge not found or expired" });
     }
 
-    // Use the credential ID exactly as it comes
+    // Find the authenticator using the credential ID
     const incomingCredentialID = cred.id;
     console.log("Incoming credentialID:", incomingCredentialID);
     console.log("Credential rawId:", cred.rawId);
 
-    // Try to find authenticator by credentialID
-    // Note: cred.id should match the stored credentialID
-    let authenticator = await Authenticator.findOne({
+    const authenticator = await Authenticator.findOne({
       credentialID: incomingCredentialID,
     });
 
-    // If not found, try alternative lookup (sometimes cred.id might be different from rawId)
     if (!authenticator) {
-      console.log(
-        "Authenticator not found with cred.id, trying rawId conversion..."
-      );
-      const alternativeCredentialID = Buffer.from(
-        cred.rawId,
-        "base64"
-      ).toString("base64url");
-      console.log("Alternative credentialID:", alternativeCredentialID);
-
-      authenticator = await Authenticator.findOne({
-        credentialID: alternativeCredentialID,
-      });
-    }
-
-    if (!authenticator) {
+      await expectedChallenge.deleteOne();
       return res.status(404).json({
         message: "Authenticator not found. Please register this device first.",
       });
@@ -219,115 +204,90 @@ router.post("/verify-authentication", async (req, res) => {
       hasCredentialPublicKey: !!authenticator.credentialPublicKey,
     });
 
-    // ✅ FIX: Create the authenticator object in the correct format
-    // Convert credentialID from base64url string to Uint8Array
-    const credentialIDBuffer = Buffer.from(
-      authenticator.credentialID,
-      "base64url"
-    );
-    const credentialIDUint8Array = new Uint8Array(credentialIDBuffer);
-
-    // Convert credentialPublicKey from Buffer to Uint8Array
-    const credentialPublicKeyUint8Array = new Uint8Array(
-      authenticator.credentialPublicKey
-    );
-
-    const authenticatorForVerification = {
-      credentialID: credentialIDUint8Array,
-      credentialPublicKey: credentialPublicKeyUint8Array,
+    // ✅ FIX: For v13+, use the exact format expected by the library
+    const authenticatorDevice = {
+      credentialID: authenticator.credentialID,
+      credentialPublicKey: authenticator.credentialPublicKey,
       counter: authenticator.counter,
-      transports: authenticator.transports || ["internal"],
+      transports: authenticator.transports || [],
     };
 
-    console.log("Prepared for verification:", {
-      credentialIDLength: authenticatorForVerification.credentialID.length,
+    console.log("Authenticator for verification:", {
+      credentialID: authenticatorDevice.credentialID,
       credentialPublicKeyLength:
-        authenticatorForVerification.credentialPublicKey.length,
-      counter: authenticatorForVerification.counter,
-      transports: authenticatorForVerification.transports,
-      // Debug: Compare credential IDs
-      storedCredentialIDHex: credentialIDBuffer.toString("hex"),
-      incomingCredIDHex: Buffer.from(cred.rawId, "base64").toString("hex"),
-      credentialIDsMatch:
-        credentialIDBuffer.toString("hex") ===
-        Buffer.from(cred.rawId, "base64").toString("hex"),
+        authenticatorDevice.credentialPublicKey?.length,
+      counter: authenticatorDevice.counter,
+      transports: authenticatorDevice.transports,
     });
 
-    // Verify authentication
+    // Verify the authentication response
     let verification;
     try {
-      // Log the raw credential response for debugging
-      console.log("Raw credential response:", {
-        id: cred.id,
-        rawId: cred.rawId,
-        hasResponse: !!cred.response,
-        hasAuthenticatorData: !!cred.response?.authenticatorData,
-        hasSignature: !!cred.response?.signature,
-        hasClientDataJSON: !!cred.response?.clientDataJSON,
-      });
-
       verification = await verifyAuthenticationResponse({
         response: cred,
         expectedChallenge: challengeFromResponse,
         expectedOrigin: origin,
         expectedRPID: rpID,
-        authenticator: authenticatorForVerification,
+        authenticator: authenticatorDevice,
         requireUserVerification: false,
       });
 
-      console.log("Verification result:", {
+      console.log("Verification completed:", {
         verified: verification.verified,
-        hasAuthInfo: !!verification.authenticationInfo,
-        verificationKeys: Object.keys(verification || {}),
+        authenticationInfo: verification.authenticationInfo
+          ? {
+              newCounter: verification.authenticationInfo.newCounter,
+              userVerified: verification.authenticationInfo.userVerified,
+            }
+          : "undefined",
       });
     } catch (verifyError) {
       console.error("Verification function error:", verifyError);
       console.error("Error details:", {
         name: verifyError.name,
         message: verifyError.message,
-        stack: verifyError.stack?.split("\n").slice(0, 3), // First 3 lines of stack
+        stack: verifyError.stack?.split("\n").slice(0, 5), // First 5 lines
       });
 
-      // Check if it's a specific WebAuthn error
-      if (
-        verifyError.message.includes("counter") ||
-        verifyError.message.includes("undefined")
-      ) {
-        console.error(
-          "This appears to be a counter-related error in the library"
-        );
-        console.error("Current authenticator counter:", authenticator.counter);
-
-        // Try a workaround: manually handle the verification result
-        return res.status(400).json({
-          message:
-            "Authentication verification failed due to internal library error",
-          error: verifyError.message,
-          suggestion: "This may be a library version compatibility issue",
-        });
-      }
+      // Clean up challenge before returning error
+      await expectedChallenge.deleteOne();
 
       return res.status(400).json({
         message: "Authentication verification failed",
         error: verifyError.message,
-        details: "Check server logs for more information",
+        debug: {
+          credentialID: authenticatorDevice.credentialID,
+          counter: authenticatorDevice.counter,
+          rpID: rpID,
+          origin: origin,
+        },
       });
     }
 
-    if (verification.verified) {
-      // Update the counter only if verification was successful
+    // Handle successful verification
+    if (verification.verified && verification.authenticationInfo) {
+      // Update the counter
       authenticator.counter = verification.authenticationInfo.newCounter;
       await authenticator.save();
+
       console.log(
         "Authentication successful, counter updated to:",
         authenticator.counter
       );
 
       await expectedChallenge.deleteOne();
-      res.json({ verified: true, userId: authenticator.userId });
+      res.json({
+        verified: true,
+        userId: authenticator.userId,
+        newCounter: verification.authenticationInfo.newCounter,
+      });
     } else {
+      console.log("Verification failed or no authenticationInfo");
       await expectedChallenge.deleteOne();
-      res.json({ verified: false, message: "Authentication failed" });
+      res.json({
+        verified: false,
+        message: "Authentication failed - verification returned false",
+      });
     }
   } catch (error) {
     console.error("Error in /verify-authentication:", error);
