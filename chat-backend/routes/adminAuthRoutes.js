@@ -123,7 +123,7 @@ router.post("/biometric-login", async (req, res) => {
   }
 });
 
-// --- ✅ ADDED PROTECTED ROUTES ---
+// --- Protected Routes (Require Token) ---
 
 /**
  * @route   GET /api/admin/auth/me
