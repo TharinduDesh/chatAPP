@@ -34,7 +34,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { API_URL } from "../config/apiConfig";
+import { API_BASE_URL } from "../config/apiConfig";
 
 const StatCard = ({ title, value, icon, color }) => (
   <Card sx={{ display: "flex", alignItems: "center", p: 2 }}>
@@ -88,7 +88,7 @@ const DashboardPage = () => {
     if (!admin) return;
 
     // Use the API_URL from your config for the socket connection
-    const socket = io(API_URL, {
+    const socket = io(API_BASE_URL, {
       query: { userId: `admin_${admin.id}` }, // Safely access admin ID
     });
 
