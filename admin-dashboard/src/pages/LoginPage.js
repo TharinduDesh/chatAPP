@@ -42,17 +42,20 @@ const LoginPage = () => {
   };
 
   const handleBiometricLogin = async () => {
+    alert("Function called!"); // This should appear immediately
+
     if (!email) {
-      alert("Please enter email first");
+      alert("No email provided");
       return;
     }
 
+    alert("About to test API call...");
+
     try {
-      alert("About to call test endpoint...");
       await testBiometricEndpoint(email);
-      alert("Test completed!");
+      alert("API call successful!");
     } catch (error) {
-      alert("Test failed: " + error.message);
+      alert("API call failed: " + error.message);
     }
   };
 
