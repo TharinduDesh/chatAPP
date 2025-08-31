@@ -216,7 +216,7 @@ router.post("/verify-authentication", async (req, res) => {
       credentialPublicKey: credentialPublicKey,
       counter: parseInt(authenticator.counter) || 0,
       // Add transports as an empty array if needed
-      transports: authenticator.transports,
+      transports: authenticator.transports || ["internal"],
     };
 
     console.log("Prepared for verification:", {
