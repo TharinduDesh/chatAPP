@@ -1,8 +1,9 @@
 // src/pages/LoginPage.js
 import React, { useState } from "react";
-import axios from "axios";
 import { useNavigate, Link } from "react-router-dom";
-import { login, biometricLogin } from "../services/authService";
+import axios from "axios";
+import { login } from "../services/authService";
+import { loginWithBiometrics } from "../services/webauthnService"; // Make sure this is imported
 import {
   TextField,
   Button,
@@ -10,20 +11,12 @@ import {
   Typography,
   Box,
   Divider,
-  Snackbar,
-  Alert,
 } from "@mui/material";
-import { loginWithBiometrics } from "../services/webauthnService";
 import Fingerprint from "@mui/icons-material/Fingerprint";
 
 const LoginPage = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [snackbar, setSnackbar] = useState({
-    open: false,
-    message: "",
-    severity: "success",
-  });
   const navigate = useNavigate();
 
   const handleLogin = async (e) => {
@@ -33,20 +26,8 @@ const LoginPage = () => {
       navigate("/dashboard");
     } catch (error) {
       console.error("Login failed", error);
-      setSnackbar({
-        open: true,
-        message:
-          error.response?.data?.message || "Login failed. Please try again.",
-        severity: "error",
-      });
+      alert(error.response?.data?.message || "Login failed");
     }
-  };
-
-  const handleCloseSnackbar = (event, reason) => {
-    if (reason === "clickaway") {
-      return;
-    }
-    setSnackbar({ ...snackbar, open: false });
   };
 
   const handleBiometricLogin = async () => {
@@ -54,8 +35,11 @@ const LoginPage = () => {
       alert("Please enter your Email Address to log in with biometrics.");
       return;
     }
+
+    console.log("Starting biometric login process for:", email);
+
     try {
-      console.log("Starting biometric login process...");
+      // Make sure this is calling loginWithBiometrics, NOT login
       const result = await loginWithBiometrics(email);
       console.log("Biometric login result:", result);
 
@@ -138,7 +122,8 @@ const LoginPage = () => {
             Use Biometrics
           </Typography>
           <Button
-            onClick={handleBiometricLogin}
+            type="button"
+            onClick={handleBiometricLogin} // This should call handleBiometricLogin
             fullWidth
             variant="outlined"
             startIcon={<Fingerprint />}
@@ -153,20 +138,6 @@ const LoginPage = () => {
           </Link>
         </Box>
       </Box>
-
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={6000}
-        onClose={handleCloseSnackbar}
-      >
-        <Alert
-          onClose={handleCloseSnackbar}
-          severity={snackbar.severity}
-          sx={{ width: "100%" }}
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
     </Container>
   );
 };

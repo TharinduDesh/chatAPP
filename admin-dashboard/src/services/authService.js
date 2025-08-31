@@ -9,8 +9,12 @@ const getAuthToken = () => {
   return admin ? `Bearer ${admin.token}` : "";
 };
 
-// Function to handle admin login
 export const login = async (email, password) => {
+  console.log("🔐 Regular login called with:", {
+    email,
+    password: password ? "***" : "null",
+  });
+
   const response = await axios.post(`${API_BASE_URL}/admin/auth/login`, {
     email,
     password,
@@ -27,8 +31,9 @@ export const login = async (email, password) => {
   return response.data;
 };
 
-// Add this function for biometric login
 export const biometricLogin = async (userId) => {
+  console.log("🔐 Biometric login called with userId:", userId);
+
   const response = await axios.post(
     `${API_BASE_URL}/admin/auth/biometric-login`,
     {
