@@ -15,8 +15,8 @@ const Challenge = require("../models/Challenge");
 const router = express.Router();
 
 // Make sure these match your Netlify deployment exactly
-const rpID = "sltchatapp1.netlify.app";
-const origin = `https://sltchatapp1.netlify.app`;
+const rpID = "chatappadmin.netlify.app";
+const origin = `https://chatappadmin.netlify.app`;
 
 // ---------------- REGISTER OPTIONS ----------------
 router.post("/register-options", async (req, res) => {
@@ -229,11 +229,9 @@ router.post("/verify-authentication", async (req, res) => {
         { authenticatorId: authenticator._id }
       );
       await expectedChallenge.deleteOne();
-      return res
-        .status(404)
-        .json({
-          message: "Could not find the user associated with this passkey.",
-        });
+      return res.status(404).json({
+        message: "Could not find the user associated with this passkey.",
+      });
     }
     // --- END: MODIFIED LOGIC ---
 

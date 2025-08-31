@@ -21,7 +21,7 @@ const io = new Server(httpServer, { cors: { origin: "*" } });
 // This section is now corrected and simplified.
 const corsOptions = {
   origin: [
-    "https://sltchatapp1.netlify.app", // Production
+    "https://chatappadmin.netlify.app", // Production
     "http://localhost:3000", // Local development
   ], // Your Netlify frontend URL
   methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
