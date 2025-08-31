@@ -186,19 +186,17 @@ router.post("/auth-options", async (req, res) => {
   }
 });
 
-// ---------------- VERIFY AUTHENTICATION (Compatible with v10.x) ----------------
+// ---------------- VERIFY AUTHENTICATION (FINAL, ROBUST VERSION) ----------------
 router.post("/verify-authentication", async (req, res) => {
   const { cred } = req.body;
 
   try {
-    // Extract challenge from the client data
     const clientDataJSON = Buffer.from(
       cred.response.clientDataJSON,
       "base64"
     ).toString("utf8");
     const challengeFromResponse = JSON.parse(clientDataJSON).challenge;
 
-    // Find and validate the challenge
     const expectedChallenge = await Challenge.findOne({
       challenge: challengeFromResponse,
     });
@@ -208,16 +206,11 @@ router.post("/verify-authentication", async (req, res) => {
         .json({ message: "Challenge not found or expired" });
     }
 
-    // Find the authenticator using the credential ID
-    const incomingCredentialID = cred.id;
-    console.log("Incoming credentialID:", incomingCredentialID);
-
-    // --- START: MODIFICATION ---
-    // Use .populate('userId') to fetch the admin data along with the authenticator
+    // --- START: MODIFIED LOGIC ---
+    // First, find the authenticator and immediately check if the user is populated
     const authenticator = await Authenticator.findOne({
-      credentialID: incomingCredentialID,
+      credentialID: cred.id,
     }).populate("userId");
-    // --- END: MODIFICATION ---
 
     if (!authenticator) {
       await expectedChallenge.deleteOne();
@@ -226,30 +219,31 @@ router.post("/verify-authentication", async (req, res) => {
       });
     }
 
-    console.log("Found authenticator:", {
-      credentialID: authenticator.credentialID,
-      counter: authenticator.counter,
-      hasCredentialPublicKey: !!authenticator.credentialPublicKey,
-    });
+    // Get the admin user from the populated authenticator
+    const adminUser = authenticator.userId;
 
-    // ✅ CORRECT FORMAT for @simplewebauthn/server v10.x
+    // Critical check to ensure the user was successfully linked and fetched
+    if (!adminUser) {
+      console.error(
+        "CRITICAL: Authenticator found, but the linked Admin user could not be populated. Check for orphaned authenticator records.",
+        { authenticatorId: authenticator._id }
+      );
+      await expectedChallenge.deleteOne();
+      return res
+        .status(404)
+        .json({
+          message: "Could not find the user associated with this passkey.",
+        });
+    }
+    // --- END: MODIFIED LOGIC ---
+
     const authenticatorDevice = {
-      credentialID: authenticator.credentialID, // Keep as base64url string for v10
-      credentialPublicKey: authenticator.credentialPublicKey, // Keep as Buffer
+      credentialID: authenticator.credentialID,
+      credentialPublicKey: authenticator.credentialPublicKey,
       counter: authenticator.counter,
       transports: authenticator.transports || ["internal"],
     };
 
-    console.log("Authenticator prepared for v10 verification:", {
-      credentialID: authenticatorDevice.credentialID,
-      credentialIDType: typeof authenticatorDevice.credentialID,
-      credentialPublicKeyLength: authenticatorDevice.credentialPublicKey.length,
-      credentialPublicKeyType: typeof authenticatorDevice.credentialPublicKey,
-      counter: authenticatorDevice.counter,
-      transports: authenticatorDevice.transports,
-    });
-
-    // Verify the authentication response
     let verification;
     try {
       verification = await verifyAuthenticationResponse({
@@ -260,67 +254,46 @@ router.post("/verify-authentication", async (req, res) => {
         authenticator: authenticatorDevice,
         requireUserVerification: false,
       });
-
-      console.log("V10 Verification result:", {
-        verified: verification.verified,
-        authenticationInfo: verification.authenticationInfo
-          ? {
-              newCounter: verification.authenticationInfo.newCounter,
-              userVerified: verification.authenticationInfo.userVerified,
-            }
-          : null,
-      });
     } catch (verifyError) {
       console.error("V10 Verification error:", verifyError);
       await expectedChallenge.deleteOne();
-
       return res.status(400).json({
         message: "Authentication verification failed",
         error: verifyError.message,
       });
     }
 
-    // Clean up the challenge now that it has been used
     await expectedChallenge.deleteOne();
 
-    // Handle the verification result
     if (verification.verified) {
-      // Update counter if authenticationInfo is available
       if (verification.authenticationInfo) {
         authenticator.counter = verification.authenticationInfo.newCounter;
         await authenticator.save();
-        console.log("Counter updated to:", authenticator.counter);
       }
 
-      // --- START: MODIFIED LOGIC ---
-      // The admin user is now attached to authenticator.userId because we used .populate()
-      const adminUser = authenticator.userId;
-
-      if (!adminUser) {
-        return res
-          .status(404)
-          .json({ message: "Authenticated admin user not found." });
+      if (!process.env.JWT_SECRET) {
+        console.error(
+          "FATAL: JWT_SECRET is not defined in environment variables."
+        );
+        return res.status(500).json({ message: "Server configuration error." });
       }
 
-      // Generate a JWT for the admin session
       const token = jwt.sign(
         { id: adminUser._id, role: "admin" },
-        process.env.JWT_SECRET, // Ensure you have JWT_SECRET in your .env file
-        { expiresIn: "1d" } // Token is valid for 1 day
+        process.env.JWT_SECRET,
+        { expiresIn: "1d" }
       );
 
-      // Send the token and user data back to the frontend
       res.status(200).json({
         message: "Biometric login successful!",
-        token,
+        token, // Send the token
         admin: {
+          // Send admin data
           id: adminUser._id,
-          username: adminUser.username,
           email: adminUser.email,
           fullName: adminUser.fullName,
         },
       });
-      // --- END: MODIFIED LOGIC ---
     } else {
       res.status(401).json({
         verified: false,
