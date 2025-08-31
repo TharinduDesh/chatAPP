@@ -1,11 +1,7 @@
 // src/pages/LoginPage.js
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import {
-  login,
-  biometricLogin,
-  testBiometricEndpoint,
-} from "../services/authService"; // ✅ Import biometricLogin
+import { login, testBiometricEndpoint } from "../services/authService"; // ✅ Import biometricLogin
 import {
   TextField,
   Button,
@@ -47,31 +43,16 @@ const LoginPage = () => {
 
   const handleBiometricLogin = async () => {
     if (!email) {
-      setSnackbar({
-        open: true,
-        message: "Please enter your Email Address to log in with biometrics.",
-        severity: "warning",
-      });
+      alert("Please enter email first");
       return;
     }
 
     try {
-      // Skip WebAuthn for now, just test the API call
-      console.log("Testing direct API call...");
+      alert("About to call test endpoint...");
       await testBiometricEndpoint(email);
-
-      setSnackbar({
-        open: true,
-        message: "Test successful!",
-        severity: "success",
-      });
+      alert("Test completed!");
     } catch (error) {
-      console.error("Test error:", error);
-      setSnackbar({
-        open: true,
-        message: error.response?.data?.message || "Test failed",
-        severity: "error",
-      });
+      alert("Test failed: " + error.message);
     }
   };
 

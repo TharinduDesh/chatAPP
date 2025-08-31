@@ -94,14 +94,21 @@ export const changeAdminPassword = async (passwordData) => {
   return response.data;
 };
 
+// Add this function to authService.js
 export const testBiometricEndpoint = async (email) => {
-  console.log("FRONTEND TEST: Testing biometric endpoint");
+  console.log(
+    "🔍 FRONTEND TEST: Testing biometric endpoint with email:",
+    email
+  );
+  console.log("🔍 FRONTEND TEST: API_URL is:", API_URL);
   try {
     const response = await axios.post(API_URL + "test-biometric", { email });
-    console.log("FRONTEND TEST: Response:", response.data);
+    console.log("🔍 FRONTEND TEST: Success response:", response.data);
+    alert("Test successful! Check Railway console.");
     return response.data;
   } catch (error) {
-    console.error("FRONTEND TEST: Error:", error);
+    console.error("🔍 FRONTEND TEST: Error:", error);
+    alert("Test failed! Error: " + error.message);
     throw error;
   }
 };
