@@ -34,6 +34,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import { API_URL } from "../config/apiConfig";
 
 const StatCard = ({ title, value, icon, color }) => (
   <Card sx={{ display: "flex", alignItems: "center", p: 2 }}>
@@ -59,14 +60,12 @@ const DashboardPage = () => {
     endDate: new Date(),
   });
 
-  // ** THE FIX IS HERE **
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      // 1. The API calls now correctly use their respective state variables.
       const [statsData, newUsersData] = await Promise.all([
         getDashboardStats(dateRange),
-        getNewUsersChartData(chartPeriod), // Use chartPeriod for the chart
+        getNewUsersChartData(chartPeriod),
       ]);
       setStats(statsData);
       setChartData(newUsersData);
@@ -78,25 +77,28 @@ const DashboardPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [dateRange, chartPeriod]); // 2. The function now re-runs if dateRange OR chartPeriod changes.
+  }, [dateRange, chartPeriod]);
 
   useEffect(() => {
     fetchData();
-  }, [fetchData]); // This correctly calls the new fetchData function when it's recreated.
+  }, [fetchData]);
 
   useEffect(() => {
-    // Socket logic remains the same
     const admin = getCurrentAdmin();
     if (!admin) return;
-    const socket = io("http://localhost:5000", {
-      query: { userId: `admin_${admin.admin._id}` },
+
+    // Use the API_URL from your config for the socket connection
+    const socket = io(API_URL, {
+      query: { userId: `admin_${admin.id}` }, // Safely access admin ID
     });
+
     socket.on("activeUsers", (activeUserIds) => {
       const chatUsersOnline = activeUserIds.filter(
         (id) => !id.startsWith("admin_")
       );
       setOnlineUserCount(chatUsersOnline.length);
     });
+
     return () => {
       socket.disconnect();
     };
@@ -193,55 +195,66 @@ const DashboardPage = () => {
             </Grid>
           </Grid>
 
-          <Card>
-            <CardContent>
-              <Box
-                sx={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
-              >
-                <Typography variant="h6">New Users</Typography>
-                {/* ButtonGroup for Chart Period */}
-                <ButtonGroup size="small">
-                  <Button
-                    onClick={() => setChartPeriod("week")}
-                    variant={chartPeriod === "week" ? "contained" : "outlined"}
+          <Grid container spacing={3}>
+            <Grid item xs={12} lg={8}>
+              <Card>
+                <CardContent>
+                  <Box
+                    sx={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      mb: 2,
+                    }}
                   >
-                    7 Days
-                  </Button>
-                  <Button
-                    onClick={() => setChartPeriod("month")}
-                    variant={chartPeriod === "month" ? "contained" : "outlined"}
-                  >
-                    30 Days
-                  </Button>
-                  <Button
-                    onClick={() => setChartPeriod("year")}
-                    variant={chartPeriod === "year" ? "contained" : "outlined"}
-                  >
-                    This Year
-                  </Button>
-                </ButtonGroup>
-              </Box>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" />
-                  <YAxis allowDecimals={false} />
-                  <Tooltip />
-                  <Bar dataKey="New Users" fill="#8884d8" />
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
+                    <Typography variant="h6">New Users</Typography>
+                    {/* ButtonGroup for Chart Period */}
+                    <ButtonGroup size="small">
+                      <Button
+                        onClick={() => setChartPeriod("week")}
+                        variant={
+                          chartPeriod === "week" ? "contained" : "outlined"
+                        }
+                      >
+                        7 Days
+                      </Button>
+                      <Button
+                        onClick={() => setChartPeriod("month")}
+                        variant={
+                          chartPeriod === "month" ? "contained" : "outlined"
+                        }
+                      >
+                        30 Days
+                      </Button>
+                      <Button
+                        onClick={() => setChartPeriod("year")}
+                        variant={
+                          chartPeriod === "year" ? "contained" : "outlined"
+                        }
+                      >
+                        This Year
+                      </Button>
+                    </ButtonGroup>
+                  </Box>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="date" />
+                      <YAxis allowDecimals={false} />
+                      <Tooltip />
+                      <Bar dataKey="count" name="New Users" fill="#8884d8" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+            </Grid>
 
-          <Grid item xs={12} lg={4}>
-            <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
-              <MostActiveUsers />
-              <RecentActivity />
-            </Box>
+            <Grid item xs={12} lg={4}>
+              <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                <MostActiveUsers />
+                <RecentActivity />
+              </Box>
+            </Grid>
           </Grid>
         </>
       )}
