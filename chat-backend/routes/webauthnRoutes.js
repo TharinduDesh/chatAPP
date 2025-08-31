@@ -30,8 +30,9 @@ router.post("/register-options", async (req, res) => {
     const options = await generateRegistrationOptions({
       rpName: "ChatApp Admin",
       rpID,
-      userID: user._id.toString(), // Keep as string for v10
+      userID: Buffer.from(user._id.toString()), // Convert to Buffer for v10
       userName: user.email,
+      userDisplayName: user.fullName || user.email, // Add display name
       attestationType: "none",
       excludeCredentials: userAuthenticators.map((auth) => ({
         id: auth.credentialID, // Keep as string for v10
