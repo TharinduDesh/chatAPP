@@ -185,7 +185,6 @@ router.post("/verify-authentication", async (req, res) => {
     // Find the authenticator using the credential ID
     const incomingCredentialID = cred.id;
     console.log("Incoming credentialID:", incomingCredentialID);
-    console.log("Credential rawId:", cred.rawId);
 
     const authenticator = await Authenticator.findOne({
       credentialID: incomingCredentialID,
@@ -204,20 +203,22 @@ router.post("/verify-authentication", async (req, res) => {
       hasCredentialPublicKey: !!authenticator.credentialPublicKey,
     });
 
-    // ✅ FIX: For v13+, use the exact format expected by the library
+    // ✅ FIX: For @simplewebauthn/server v13+, use this exact format
     const authenticatorDevice = {
-      credentialID: authenticator.credentialID,
+      credentialID: Buffer.from(authenticator.credentialID, "base64url"),
       credentialPublicKey: authenticator.credentialPublicKey,
       counter: authenticator.counter,
       transports: authenticator.transports || [],
     };
 
     console.log("Authenticator for verification:", {
-      credentialID: authenticatorDevice.credentialID,
+      credentialIDLength: authenticatorDevice.credentialID.length,
       credentialPublicKeyLength:
         authenticatorDevice.credentialPublicKey?.length,
       counter: authenticatorDevice.counter,
       transports: authenticatorDevice.transports,
+      credentialIDType: typeof authenticatorDevice.credentialID,
+      credentialPublicKeyType: typeof authenticatorDevice.credentialPublicKey,
     });
 
     // Verify the authentication response
@@ -232,7 +233,7 @@ router.post("/verify-authentication", async (req, res) => {
         requireUserVerification: false,
       });
 
-      console.log("Verification completed:", {
+      console.log("Verification completed successfully:", {
         verified: verification.verified,
         authenticationInfo: verification.authenticationInfo
           ? {
@@ -243,11 +244,6 @@ router.post("/verify-authentication", async (req, res) => {
       });
     } catch (verifyError) {
       console.error("Verification function error:", verifyError);
-      console.error("Error details:", {
-        name: verifyError.name,
-        message: verifyError.message,
-        stack: verifyError.stack?.split("\n").slice(0, 5), // First 5 lines
-      });
 
       // Clean up challenge before returning error
       await expectedChallenge.deleteOne();
@@ -255,12 +251,8 @@ router.post("/verify-authentication", async (req, res) => {
       return res.status(400).json({
         message: "Authentication verification failed",
         error: verifyError.message,
-        debug: {
-          credentialID: authenticatorDevice.credentialID,
-          counter: authenticatorDevice.counter,
-          rpID: rpID,
-          origin: origin,
-        },
+        suggestion:
+          "Library version compatibility issue - consider downgrading to v8.x",
       });
     }
 
