@@ -183,11 +183,29 @@ router.post("/verify-authentication", async (req, res) => {
     // Use the credential ID exactly as it comes
     const incomingCredentialID = cred.id;
     console.log("Incoming credentialID:", incomingCredentialID);
+    console.log("Credential rawId:", cred.rawId);
 
-    // Find authenticator by comparing strings directly
-    const authenticator = await Authenticator.findOne({
+    // Try to find authenticator by credentialID
+    // Note: cred.id should match the stored credentialID
+    let authenticator = await Authenticator.findOne({
       credentialID: incomingCredentialID,
     });
+
+    // If not found, try alternative lookup (sometimes cred.id might be different from rawId)
+    if (!authenticator) {
+      console.log(
+        "Authenticator not found with cred.id, trying rawId conversion..."
+      );
+      const alternativeCredentialID = Buffer.from(
+        cred.rawId,
+        "base64"
+      ).toString("base64url");
+      console.log("Alternative credentialID:", alternativeCredentialID);
+
+      authenticator = await Authenticator.findOne({
+        credentialID: alternativeCredentialID,
+      });
+    }
 
     if (!authenticator) {
       return res.status(404).json({
@@ -202,19 +220,37 @@ router.post("/verify-authentication", async (req, res) => {
     });
 
     // ✅ FIX: Create the authenticator object in the correct format
+    // Convert credentialID from base64url string to Uint8Array
+    const credentialIDBuffer = Buffer.from(
+      authenticator.credentialID,
+      "base64url"
+    );
+    const credentialIDUint8Array = new Uint8Array(credentialIDBuffer);
+
+    // Convert credentialPublicKey from Buffer to Uint8Array
+    const credentialPublicKeyUint8Array = new Uint8Array(
+      authenticator.credentialPublicKey
+    );
+
     const authenticatorForVerification = {
-      credentialID: authenticator.credentialID, // Keep as string, library will handle conversion
-      credentialPublicKey: authenticator.credentialPublicKey, // Keep as Buffer
+      credentialID: credentialIDUint8Array,
+      credentialPublicKey: credentialPublicKeyUint8Array,
       counter: authenticator.counter,
-      transports: authenticator.transports || ["internal"], // Provide default transports
+      transports: authenticator.transports || ["internal"],
     };
 
     console.log("Prepared for verification:", {
-      credentialID: authenticatorForVerification.credentialID,
+      credentialIDLength: authenticatorForVerification.credentialID.length,
       credentialPublicKeyLength:
         authenticatorForVerification.credentialPublicKey.length,
       counter: authenticatorForVerification.counter,
       transports: authenticatorForVerification.transports,
+      // Debug: Compare credential IDs
+      storedCredentialIDHex: credentialIDBuffer.toString("hex"),
+      incomingCredIDHex: Buffer.from(cred.rawId, "base64").toString("hex"),
+      credentialIDsMatch:
+        credentialIDBuffer.toString("hex") ===
+        Buffer.from(cred.rawId, "base64").toString("hex"),
     });
 
     // Verify authentication
@@ -226,14 +262,29 @@ router.post("/verify-authentication", async (req, res) => {
         expectedOrigin: origin,
         expectedRPID: rpID,
         authenticator: authenticatorForVerification,
-        requireUserVerification: false, // You might want to set this to true for better security
+        requireUserVerification: false,
+        // Add this for better debugging
+        advancedFIDOConfig: {
+          userVerification: "preferred",
+        },
+      });
+
+      console.log("Verification result:", {
+        verified: verification.verified,
+        hasAuthInfo: !!verification.authenticationInfo,
       });
     } catch (verifyError) {
       console.error("Verification function error:", verifyError);
+      console.error("Error details:", {
+        name: verifyError.name,
+        message: verifyError.message,
+        stack: verifyError.stack?.split("\n")[0], // Just first line of stack
+      });
       // Provide more detailed error info
       return res.status(400).json({
         message: "Authentication verification failed",
         error: verifyError.message,
+        details: "Check server logs for more information",
       });
     }
 
