@@ -201,32 +201,23 @@ router.post("/verify-authentication", async (req, res) => {
       hasCredentialPublicKey: !!authenticator.credentialPublicKey,
     });
 
-    // Convert to the exact format expected by the library
-    // The library expects the raw credential ID and public key as Uint8Array
-    const credentialID = Uint8Array.from(
-      Buffer.from(authenticator.credentialID, "base64url")
-    );
-    const credentialPublicKey = Uint8Array.from(
-      authenticator.credentialPublicKey
-    );
-
-    // Create the authenticator object in the exact format expected by the library
+    // ✅ FIX: Create the authenticator object in the correct format
     const authenticatorForVerification = {
-      credentialID: credentialID,
-      credentialPublicKey: credentialPublicKey,
-      counter: parseInt(authenticator.counter) || 0,
-      // Add transports as an empty array if needed
-      transports: authenticator.transports || ["internal"],
+      credentialID: authenticator.credentialID, // Keep as string, library will handle conversion
+      credentialPublicKey: authenticator.credentialPublicKey, // Keep as Buffer
+      counter: authenticator.counter,
+      transports: authenticator.transports || ["internal"], // Provide default transports
     };
 
     console.log("Prepared for verification:", {
-      credentialIDLength: authenticatorForVerification.credentialID.length,
+      credentialID: authenticatorForVerification.credentialID,
       credentialPublicKeyLength:
         authenticatorForVerification.credentialPublicKey.length,
       counter: authenticatorForVerification.counter,
+      transports: authenticatorForVerification.transports,
     });
 
-    // Verify authentication - try a different approach
+    // Verify authentication
     let verification;
     try {
       verification = await verifyAuthenticationResponse({
@@ -235,24 +226,32 @@ router.post("/verify-authentication", async (req, res) => {
         expectedOrigin: origin,
         expectedRPID: rpID,
         authenticator: authenticatorForVerification,
-        requireUserVerification: false,
+        requireUserVerification: false, // You might want to set this to true for better security
       });
     } catch (verifyError) {
       console.error("Verification function error:", verifyError);
-      throw verifyError;
+      // Provide more detailed error info
+      return res.status(400).json({
+        message: "Authentication verification failed",
+        error: verifyError.message,
+      });
     }
 
     if (verification.verified) {
+      // Update the counter only if verification was successful
       authenticator.counter = verification.authenticationInfo.newCounter;
       await authenticator.save();
       console.log(
         "Authentication successful, counter updated to:",
         authenticator.counter
       );
-    }
 
-    await expectedChallenge.deleteOne();
-    res.json({ verified: verification.verified });
+      await expectedChallenge.deleteOne();
+      res.json({ verified: true, userId: authenticator.userId });
+    } else {
+      await expectedChallenge.deleteOne();
+      res.json({ verified: false, message: "Authentication failed" });
+    }
   } catch (error) {
     console.error("Error in /verify-authentication:", error);
     res.status(500).json({ message: "Server error", error: error.message });
