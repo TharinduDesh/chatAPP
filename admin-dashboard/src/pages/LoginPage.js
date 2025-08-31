@@ -1,9 +1,7 @@
-// src/pages/LoginPage.js
+// src/pages/LoginPage.js - DEBUG VERSION
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import axios from "axios";
-import { login } from "../services/authService";
-import { loginWithBiometrics } from "../services/webauthnService";
+import { login, biometricLogin } from "../services/authService"; // ✅ Make sure both are imported
 import {
   TextField,
   Button,
@@ -11,12 +9,20 @@ import {
   Typography,
   Box,
   Divider,
+  Snackbar,
+  Alert,
 } from "@mui/material";
+import { loginWithBiometrics } from "../services/webauthnService";
 import Fingerprint from "@mui/icons-material/Fingerprint";
 
 const LoginPage = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [snackbar, setSnackbar] = useState({
+    open: false,
+    message: "",
+    severity: "success",
+  });
   const navigate = useNavigate();
 
   const handleLogin = async (e) => {
@@ -26,45 +32,78 @@ const LoginPage = () => {
       navigate("/dashboard");
     } catch (error) {
       console.error("Login failed", error);
-      alert(error.response?.data?.message || "Login failed");
+      setSnackbar({
+        open: true,
+        message:
+          error.response?.data?.message || "Login failed. Please try again.",
+        severity: "error",
+      });
     }
   };
 
-  const handleBiometricLogin = async (e) => {
-    if (e) {
-      e.preventDefault(); // Prevent default form submission
-    }
+  const handleBiometricLogin = async () => {
+    console.log("🔍 DEBUG: Starting biometric login process");
+    console.log("🔍 DEBUG: Email:", email);
+    console.log(
+      "🔍 DEBUG: biometricLogin function exists:",
+      typeof biometricLogin
+    );
 
     if (!email) {
-      alert("Please enter your Email Address to log in with biometrics.");
+      setSnackbar({
+        open: true,
+        message: "Please enter your Email Address to log in with biometrics.",
+        severity: "warning",
+      });
       return;
     }
 
-    console.log("Starting biometric login process for:", email);
-
     try {
-      const result = await loginWithBiometrics(email);
-      console.log("Biometric login result:", result);
+      console.log("🔍 DEBUG: Step 1 - Starting WebAuthn verification");
 
-      if (result.token) {
-        localStorage.setItem("token", result.token);
-        localStorage.setItem("admin", JSON.stringify(result.admin));
-        axios.defaults.headers.common[
-          "Authorization"
-        ] = `Bearer ${result.token}`;
+      // Step 1: Perform WebAuthn verification
+      const webauthnResult = await loginWithBiometrics(email);
+      console.log("🔍 DEBUG: WebAuthn result:", webauthnResult);
 
-        alert("Biometric login successful!");
+      if (webauthnResult.verified) {
+        console.log(
+          "🔍 DEBUG: Step 2 - WebAuthn successful, calling biometricLogin"
+        );
+
+        // Step 2: If WebAuthn verification successful, create session
+        const loginResult = await biometricLogin(email);
+        console.log("🔍 DEBUG: Biometric login result:", loginResult);
+
+        setSnackbar({
+          open: true,
+          message: "Biometric login successful!",
+          severity: "success",
+        });
+
         navigate("/dashboard");
       } else {
-        alert("Biometric login failed. Please try again.");
+        console.log("🔍 DEBUG: WebAuthn verification failed");
+        setSnackbar({
+          open: true,
+          message: "Biometric login failed. Please try again.",
+          severity: "warning",
+        });
       }
     } catch (error) {
-      console.error("Biometric login error:", error);
-      alert(
-        error.response?.data?.message ||
-          "An error occurred during biometric login."
-      );
+      console.error("🔍 DEBUG: Biometric login error:", error);
+      console.error("🔍 DEBUG: Error response:", error.response?.data);
+      setSnackbar({
+        open: true,
+        message:
+          error.response?.data?.message ||
+          "An error occurred during biometric login.",
+        severity: "error",
+      });
     }
+  };
+
+  const handleCloseSnackbar = () => {
+    setSnackbar({ ...snackbar, open: false });
   };
 
   return (
@@ -122,7 +161,6 @@ const LoginPage = () => {
             Use Biometrics
           </Typography>
           <Button
-            type="button" // ← THIS IS CRITICAL
             onClick={handleBiometricLogin}
             fullWidth
             variant="outlined"
@@ -138,6 +176,20 @@ const LoginPage = () => {
           </Link>
         </Box>
       </Box>
+
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={6000}
+        onClose={handleCloseSnackbar}
+      >
+        <Alert
+          onClose={handleCloseSnackbar}
+          severity={snackbar.severity}
+          sx={{ width: "100%" }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Container>
   );
 };

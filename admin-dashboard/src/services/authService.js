@@ -9,47 +9,38 @@ const getAuthToken = () => {
   return admin ? `Bearer ${admin.token}` : "";
 };
 
+// Function to handle admin login
 export const login = async (email, password) => {
-  console.log("🔐 Regular login called with:", {
-    email,
-    password: password ? "***" : "null",
-  });
-
-  const response = await axios.post(`${API_BASE_URL}/admin/auth/login`, {
-    email,
-    password,
-  });
-
+  const response = await axios.post(API_URL + "login", { email, password });
   if (response.data.token) {
-    localStorage.setItem("token", response.data.token);
-    localStorage.setItem("admin", JSON.stringify(response.data.admin));
-    axios.defaults.headers.common[
-      "Authorization"
-    ] = `Bearer ${response.data.token}`;
+    // Store user and token in local storage
+    localStorage.setItem("admin", JSON.stringify(response.data));
   }
-
   return response.data;
 };
 
-export const biometricLogin = async (userId) => {
-  console.log("🔐 Biometric login called with userId:", userId);
+// ✅ NEW: Function to handle biometric login
+export const biometricLogin = async (email) => {
+  console.log("🔍 FRONTEND DEBUG: biometricLogin called with email:", email);
+  console.log("🔍 FRONTEND DEBUG: API_URL:", API_URL);
 
-  const response = await axios.post(
-    `${API_BASE_URL}/admin/auth/biometric-login`,
-    {
-      userId,
+  try {
+    // Since WebAuthn verification happens on the WebAuthn routes,
+    // we just need to create a session after successful biometric verification
+    const response = await axios.post(API_URL + "biometric-login", { email });
+    console.log("🔍 FRONTEND DEBUG: Biometric login response:", response.data);
+
+    if (response.data.token) {
+      // Store user and token in local storage (same as regular login)
+      localStorage.setItem("admin", JSON.stringify(response.data));
+      console.log("🔍 FRONTEND DEBUG: Token stored in localStorage");
     }
-  );
-
-  if (response.data.token) {
-    localStorage.setItem("token", response.data.token);
-    localStorage.setItem("admin", JSON.stringify(response.data.admin));
-    axios.defaults.headers.common[
-      "Authorization"
-    ] = `Bearer ${response.data.token}`;
+    return response.data;
+  } catch (error) {
+    console.error("🔍 FRONTEND DEBUG: Biometric login error:", error);
+    console.error("🔍 FRONTEND DEBUG: Error response:", error.response?.data);
+    throw error;
   }
-
-  return response.data;
 };
 
 // Function to handle admin logout
