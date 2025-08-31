@@ -51,34 +51,33 @@ export const registerBiometrics = async (email, userId) => {
 // ---------------------
 // Login with Biometrics
 // ---------------------
+// Update your loginWithBiometrics function
 export const loginWithBiometrics = async (email) => {
   try {
-    console.log("🔍 WEBAUTHN DEBUG: Starting biometric login for:", email);
-
-    // 1️⃣ Get authentication options from server
     const optionsResponse = await webauthnApi.post("/auth-options", { email });
-    const options = optionsResponse.data;
-    console.log("🔍 WEBAUTHN DEBUG: Got authentication options");
-
-    // 2️⃣ Start authentication in browser
-    const cred = await startAuthentication(options);
-    console.log("🔍 WEBAUTHN DEBUG: Browser authentication completed");
-
-    // 3️⃣ Send authentication response to server
+    const cred = await startAuthentication(optionsResponse.data);
     const verificationResponse = await webauthnApi.post(
       "/verify-authentication",
-      {
-        cred,
-      }
+      { cred, email }
     );
-    console.log(
-      "🔍 WEBAUTHN DEBUG: Authentication verification response:",
-      verificationResponse.data
-    );
+
+    // If verification is successful, call the biometric login endpoint
+    if (
+      verificationResponse.data.verified &&
+      verificationResponse.data.userId
+    ) {
+      const loginResponse = await webauthnApi.post(
+        "/admin/auth/biometric-login",
+        {
+          userId: verificationResponse.data.userId,
+        }
+      );
+      return loginResponse.data;
+    }
 
     return verificationResponse.data;
   } catch (error) {
-    console.error("🔍 WEBAUTHN DEBUG: Biometric login failed:", error);
+    console.error("Authentication failed:", error);
     throw error;
   }
 };

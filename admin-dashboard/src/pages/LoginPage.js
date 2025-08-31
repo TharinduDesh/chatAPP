@@ -1,5 +1,6 @@
 // src/pages/LoginPage.js
 import React, { useState } from "react";
+import axios from "axios";
 import { useNavigate, Link } from "react-router-dom";
 import { login, biometricLogin } from "../services/authService";
 import {
@@ -50,37 +51,31 @@ const LoginPage = () => {
 
   const handleBiometricLogin = async () => {
     if (!email) {
-      setSnackbar({
-        open: true,
-        message: "Please enter your email address to use biometrics.",
-        severity: "warning",
-      });
+      alert("Please enter your Email Address to log in with biometrics.");
       return;
     }
-
     try {
-      // Step 1: Perform the biometric verification
-      const verification = await loginWithBiometrics(email);
+      const result = await loginWithBiometrics(email);
+      if (result.token) {
+        // Store the token and user data
+        localStorage.setItem("token", result.token);
+        localStorage.setItem("admin", JSON.stringify(result.admin));
 
-      // --- ✅ THE DEFINITIVE FIX: Check the response and proceed ---
-      if (verification && verification.verified) {
-        // Step 2: If biometrics are verified, create the login session
-        await biometricLogin(email);
+        // Set default authorization header for future requests
+        axios.defaults.headers.common[
+          "Authorization"
+        ] = `Bearer ${result.token}`;
 
-        // Step 3: Navigate to the dashboard
+        alert("Biometric login successful!");
         navigate("/dashboard");
       } else {
-        throw new Error("Biometric verification failed.");
+        alert("Biometric login failed. Please try again.");
       }
     } catch (error) {
-      console.error("Biometric login process failed", error);
-      setSnackbar({
-        open: true,
-        message:
-          error.response?.data?.message ||
-          "Biometric login failed. Please try again.",
-        severity: "error",
-      });
+      alert(
+        error.response?.data?.message ||
+          "An error occurred during biometric login."
+      );
     }
   };
 
