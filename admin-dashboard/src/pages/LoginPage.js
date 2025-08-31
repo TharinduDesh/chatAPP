@@ -1,7 +1,7 @@
 // src/pages/LoginPage.js
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { login, testBiometricEndpoint } from "../services/authService"; // ✅ Import biometricLogin
+import { login, biometricLogin } from "../services/authService"; // ✅ Import biometricLogin
 import {
   TextField,
   Button,
@@ -42,20 +42,49 @@ const LoginPage = () => {
   };
 
   const handleBiometricLogin = async () => {
-    alert("Function called!"); // This should appear immediately
-
     if (!email) {
-      alert("No email provided");
+      setSnackbar({
+        open: true,
+        message: "Please enter your Email Address to log in with biometrics.",
+        severity: "warning",
+      });
       return;
     }
 
-    alert("About to test API call...");
-
     try {
-      await testBiometricEndpoint(email);
-      alert("API call successful!");
+      console.log("Starting biometric login process for:", email);
+
+      // Step 1: Perform WebAuthn verification
+      const { verified } = await loginWithBiometrics(email);
+      console.log("WebAuthn verification result:", verified);
+
+      if (verified) {
+        // Step 2: Create session with backend
+        await biometricLogin(email);
+
+        setSnackbar({
+          open: true,
+          message: "Biometric login successful!",
+          severity: "success",
+        });
+
+        navigate("/dashboard");
+      } else {
+        setSnackbar({
+          open: true,
+          message: "Biometric verification failed. Please try again.",
+          severity: "warning",
+        });
+      }
     } catch (error) {
-      alert("API call failed: " + error.message);
+      console.error("Biometric login error:", error);
+      setSnackbar({
+        open: true,
+        message:
+          error.response?.data?.message ||
+          "An error occurred during biometric login.",
+        severity: "error",
+      });
     }
   };
 

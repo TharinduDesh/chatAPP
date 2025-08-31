@@ -21,24 +21,18 @@ export const login = async (email, password) => {
 
 // ✅ NEW: Function to handle biometric login
 export const biometricLogin = async (email) => {
-  console.log("🔍 FRONTEND DEBUG: biometricLogin called with email:", email);
-  console.log("🔍 FRONTEND DEBUG: API_URL:", API_URL);
-
+  console.log("FRONTEND: biometricLogin called with email:", email);
   try {
-    // Since WebAuthn verification happens on the WebAuthn routes,
-    // we just need to create a session after successful biometric verification
     const response = await axios.post(API_URL + "biometric-login", { email });
-    console.log("🔍 FRONTEND DEBUG: Biometric login response:", response.data);
+    console.log("FRONTEND: Biometric login response:", response.data);
 
     if (response.data.token) {
-      // Store user and token in local storage (same as regular login)
       localStorage.setItem("admin", JSON.stringify(response.data));
-      console.log("🔍 FRONTEND DEBUG: Token stored in localStorage");
+      console.log("FRONTEND: Token stored in localStorage");
     }
     return response.data;
   } catch (error) {
-    console.error("🔍 FRONTEND DEBUG: Biometric login error:", error);
-    console.error("🔍 FRONTEND DEBUG: Error response:", error.response?.data);
+    console.error("FRONTEND: Biometric login error:", error);
     throw error;
   }
 };
@@ -92,23 +86,4 @@ export const changeAdminPassword = async (passwordData) => {
     headers: { Authorization: getAuthToken() },
   });
   return response.data;
-};
-
-// Add this function to authService.js
-export const testBiometricEndpoint = async (email) => {
-  console.log(
-    "🔍 FRONTEND TEST: Testing biometric endpoint with email:",
-    email
-  );
-  console.log("🔍 FRONTEND TEST: API_URL is:", API_URL);
-  try {
-    const response = await axios.post(API_URL + "test-biometric", { email });
-    console.log("🔍 FRONTEND TEST: Success response:", response.data);
-    alert("Test successful! Check Railway console.");
-    return response.data;
-  } catch (error) {
-    console.error("🔍 FRONTEND TEST: Error:", error);
-    alert("Test failed! Error: " + error.message);
-    throw error;
-  }
 };
