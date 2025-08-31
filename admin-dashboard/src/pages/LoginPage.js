@@ -1,7 +1,7 @@
-// src/pages/LoginPage.js - DEBUG VERSION
+// src/pages/LoginPage.js
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { login, biometricLogin } from "../services/authService"; // ✅ Make sure both are imported
+import { login, biometricLogin } from "../services/authService"; // ✅ Import biometricLogin
 import {
   TextField,
   Button,
@@ -42,13 +42,6 @@ const LoginPage = () => {
   };
 
   const handleBiometricLogin = async () => {
-    console.log("🔍 DEBUG: Starting biometric login process");
-    console.log("🔍 DEBUG: Email:", email);
-    console.log(
-      "🔍 DEBUG: biometricLogin function exists:",
-      typeof biometricLogin
-    );
-
     if (!email) {
       setSnackbar({
         open: true,
@@ -59,20 +52,12 @@ const LoginPage = () => {
     }
 
     try {
-      console.log("🔍 DEBUG: Step 1 - Starting WebAuthn verification");
-
       // Step 1: Perform WebAuthn verification
-      const webauthnResult = await loginWithBiometrics(email);
-      console.log("🔍 DEBUG: WebAuthn result:", webauthnResult);
+      const { verified } = await loginWithBiometrics(email);
 
-      if (webauthnResult.verified) {
-        console.log(
-          "🔍 DEBUG: Step 2 - WebAuthn successful, calling biometricLogin"
-        );
-
+      if (verified) {
         // Step 2: If WebAuthn verification successful, create session
-        const loginResult = await biometricLogin(email);
-        console.log("🔍 DEBUG: Biometric login result:", loginResult);
+        await biometricLogin(email); // ✅ Use the new biometricLogin function
 
         setSnackbar({
           open: true,
@@ -82,7 +67,6 @@ const LoginPage = () => {
 
         navigate("/dashboard");
       } else {
-        console.log("🔍 DEBUG: WebAuthn verification failed");
         setSnackbar({
           open: true,
           message: "Biometric login failed. Please try again.",
@@ -90,8 +74,7 @@ const LoginPage = () => {
         });
       }
     } catch (error) {
-      console.error("🔍 DEBUG: Biometric login error:", error);
-      console.error("🔍 DEBUG: Error response:", error.response?.data);
+      console.error("Biometric login error:", error);
       setSnackbar({
         open: true,
         message:
