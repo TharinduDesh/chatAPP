@@ -3,7 +3,7 @@ import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import axios from "axios";
 import { login } from "../services/authService";
-import { loginWithBiometrics } from "../services/webauthnService"; // Make sure this is imported
+import { loginWithBiometrics } from "../services/webauthnService";
 import {
   TextField,
   Button,
@@ -30,7 +30,11 @@ const LoginPage = () => {
     }
   };
 
-  const handleBiometricLogin = async () => {
+  const handleBiometricLogin = async (e) => {
+    if (e) {
+      e.preventDefault(); // Prevent default form submission
+    }
+
     if (!email) {
       alert("Please enter your Email Address to log in with biometrics.");
       return;
@@ -39,16 +43,12 @@ const LoginPage = () => {
     console.log("Starting biometric login process for:", email);
 
     try {
-      // Make sure this is calling loginWithBiometrics, NOT login
       const result = await loginWithBiometrics(email);
       console.log("Biometric login result:", result);
 
       if (result.token) {
-        // Store the token and user data
         localStorage.setItem("token", result.token);
         localStorage.setItem("admin", JSON.stringify(result.admin));
-
-        // Set default authorization header for future requests
         axios.defaults.headers.common[
           "Authorization"
         ] = `Bearer ${result.token}`;
@@ -122,8 +122,8 @@ const LoginPage = () => {
             Use Biometrics
           </Typography>
           <Button
-            type="button"
-            onClick={handleBiometricLogin} // This should call handleBiometricLogin
+            type="button" // ← THIS IS CRITICAL
+            onClick={handleBiometricLogin}
             fullWidth
             variant="outlined"
             startIcon={<Fingerprint />}
