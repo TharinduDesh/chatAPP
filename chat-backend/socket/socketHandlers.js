@@ -11,7 +11,6 @@ const initializeSocketIO = (io) => {
   io.on("connection", (socket) => {
     console.log(`SOCKET_INFO: New client connected: ${socket.id}`);
 
-    // --- START: MODIFIED CONNECTION LOGIC ---
     // Get the raw userId and the isAdmin flag from the connection query.
     const userId = socket.handshake.query.userId;
     const isAdmin = socket.handshake.query.isAdmin === "true";
@@ -41,19 +40,123 @@ const initializeSocketIO = (io) => {
     } else {
       console.log(`SOCKET_INFO: Anonymous client ${socket.id} connected.`);
     }
-    // --- END: MODIFIED CONNECTION LOGIC ---
 
-    // --- (All other socket event handlers like 'sendMessage', 'typing', etc., remain unchanged) ---
-    // ... your existing code for sendMessage, reactToMessage, etc. ...
-    socket.on("sendMessage", async (data) => {
-      const { conversationId, senderId, content } = data;
-      // Your existing implementation...
+    // --- SOCKET EVENT HANDLERS ---
+
+    // 1. Join/Leave Conversation Rooms
+    socket.on("joinConversation", (conversationId) => {
+      socket.join(conversationId);
+      console.log(`Socket ${socket.id} joined conversation: ${conversationId}`);
     });
 
+    socket.on("leaveConversation", (conversationId) => {
+      socket.leave(conversationId);
+    });
+
+    // 2. Send Message (The Missing Logic)
+    socket.on("sendMessage", async (data) => {
+      try {
+        const {
+          conversationId,
+          senderId,
+          content,
+          isEncrypted,
+          fileUrl,
+          fileType,
+          fileName,
+          replyTo,
+          replySnippet,
+          replySenderName,
+        } = data;
+
+        // A. Create and Save the Message
+        const newMessage = new Message({
+          conversationId,
+          sender: senderId,
+          content,
+          isEncrypted: isEncrypted || false,
+          fileUrl: fileUrl || "",
+          fileType: fileType || "",
+          fileName: fileName || "",
+          replyTo,
+          replySnippet,
+          replySenderName,
+          status: "sent",
+        });
+
+        const savedMessage = await newMessage.save();
+
+        const populatedMessage = await savedMessage.populate(
+          "sender",
+          "fullName email profilePictureUrl"
+        );
+
+        // B. Update the Conversation
+        const updatedConversation = await mongoose
+          .model("Conversation")
+          .findByIdAndUpdate(
+            conversationId,
+            {
+              lastMessage: savedMessage._id, // Point to the new message
+              updatedAt: new Date(), // Update timestamp so it moves to top
+            },
+            { new: true } // Return the updated document
+          )
+          .populate("participants", "fullName email profilePictureUrl")
+          .populate({
+            path: "lastMessage",
+            populate: { path: "sender", select: "fullName" },
+          });
+
+        // C. Emit 'receiveMessage' to the chat room (for users currently INSIDE the chat)
+        io.to(conversationId).emit("receiveMessage", populatedMessage);
+
+        // D. Emit 'conversationUpdated' to ALL participants (for their Home Screen)
+        if (updatedConversation) {
+          updatedConversation.participants.forEach((participant) => {
+            const participantId = participant._id.toString();
+
+            // 1. Check if this user is online (in activeUsers map)
+            const participantSocketId = activeUsers.get(participantId);
+
+            // 2. If they are online, send the update directly to their socket
+            if (participantSocketId) {
+              io.to(participantSocketId).emit(
+                "conversationUpdated",
+                updatedConversation
+              );
+            }
+          });
+        }
+
+        console.log(`Message sent & Conversation updated: ${conversationId}`);
+      } catch (error) {
+        console.error("Error in sendMessage socket handler:", error);
+      }
+    });
+
+    // 3. Typing Indicators
+    socket.on("typing", (data) => {
+      socket.to(data.conversationId).emit("userTyping", {
+        conversationId: data.conversationId,
+        userId: data.userId,
+        userName: data.userName,
+        isTyping: true,
+      });
+    });
+
+    socket.on("stopTyping", (data) => {
+      socket.to(data.conversationId).emit("userTyping", {
+        conversationId: data.conversationId,
+        userId: data.userId,
+        isTyping: false,
+      });
+    });
+
+    // 4. Disconnect Logic (Preserving your modified logic)
     socket.on("disconnect", async () => {
       console.log(`SOCKET_INFO: Client disconnected: ${socket.id}`);
 
-      // --- START: MODIFIED DISCONNECT LOGIC ---
       let disconnectedUserKey;
       // Find the user key (e.g., 'admin_...' or a regular userId) associated with the disconnected socket.
       for (const [key, value] of activeUsers.entries()) {
@@ -101,7 +204,6 @@ const initializeSocketIO = (io) => {
           );
         }
       }
-      // --- END: MODIFIED DISCONNECT LOGIC ---
     });
   });
 };
